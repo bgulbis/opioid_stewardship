@@ -11,13 +11,18 @@ dir_raw <- paste0("data/raw/", month_abbrv)
 dirr::gzip_files(dir_raw)
 
 opiods <- med_lookup(c("narcotic analgesics", "narcotic analgesic combinations")) %>%
-    mutate_at("med.name", str_to_lower) %>%
     distinct(med.name)
 
-mbo_opiods <- concat_encounters(opiods$med.name)
+opiods_lower <- mutate_at(opiods, "med.name", str_to_lower) 
+
+opiods_list <- sort(unique(c(opiods$med.name, opiods_lower$med.name, "FENTanyl", "OXYcodone")))
+
+mbo_opiods <- concat_encounters(opiods_list)
+
+# MBO queries in Opiod Stewardship folder
 
 # run MBO query
-#   * Patients - by Medication (Generic) - Administration Date
+#   * 01_patients_opiods
 #       - Facility (Curr): HH HERMANN;HH Trans Care;HH Rehab;HH Clinics;HC Childrens
 
 pts <- read_data(dir_raw, "patients", FALSE) %>%
@@ -27,8 +32,9 @@ pts <- read_data(dir_raw, "patients", FALSE) %>%
 mbo_id <- concat_encounters(pts$millennium.id, 950)
 
 # run MBO query
-#   * Medications - Inpatient - Prompt
-#   * Pain PCA Pump
+#   * 02_meds-inpt_opiods
+#   * 03_pca_opiods
+#   * 04_demographics_opiods
 
 # run EDW query
 #   * Identifiers - by Millennium Encounter ID
@@ -37,6 +43,8 @@ ids <- read_data(dir_raw, "identifiers") %>%
     as.id()
 
 edw_id <- concat_encounters(ids$pie.id, 950)
+
+# service lines ----------------------------------------
 
 # run EDW query
 #   * Service History
@@ -48,60 +56,36 @@ services <- read_data(dir_raw, "services") %>%
 demog <- read_data(dir_raw, "demographics", FALSE) %>%
     as.demographics(extras = list("service.dc" = "Medical Service (Curr)"))
 
+missing_service <- anti_join(ids, services, by = "pie.id") %>%
+    left_join(demog, by = "millennium.id") %>%
+    select(-fin, -person.id)
 # pain meds --------------------------------------------
 
-opiods <- tibble(name = c("narcotic analgesics",
-                          "narcotic analgesic combinations",
-                          "acetaminophen"),
-                 type = c(rep("class", 2), "med"),
-                 group = "sched")
+# opiods <- tibble(name = c("narcotic analgesics",
+#                           "narcotic analgesic combinations"),
+#                  type = c(rep("class", 2), "med"),
+#                  group = "sched")
+# 
+# cont_opiods <- tibble(name = c("fentanyl",
+#                                "morphine",
+#                                "hydromorphone",
+#                                "mepiridine",
+#                                "remifentanyl",
+#                                "sufentanyl"),
+#                       type = "med",
+#                       group = "cont")
 
-cont_opiods <- tibble(name = c("fentanyl",
-                               "morphine",
-                               "hydromorphone",
-                               "mepiridine",
-                               "remifentanyl",
-                               "sufentanyl"),
-                      type = "med",
-                      group = "cont")
+# 129229777
 
-lookup_meds <- med_lookup(c("narcotic analgesics", "narcotic analgesic combinations")) %>%
-    mutate_at("med.name", str_to_lower)
-
-meds_pain <- read_data(dir_raw, "meds-inpt", FALSE) %>%
+meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
-    filter(med %in% c(lookup_meds$med.name, "acetaminophen")) %>%
-    left_join(bari_id[c("millennium.id", "pie.id")], by = "millennium.id") %>%
-    inner_join(data_patients[c("pie.id", "room_out", "arrive.datetime")], by = "pie.id") %>%
-    mutate(timing = case_when(med.datetime < room_out ~ "or",
-                              med.datetime < arrive.datetime ~ "pacu",
-                              TRUE ~ "floor"),
-           time_surg = difftime(med.datetime, room_out, units = "hours"))
+    filter(floor_date(med.datetime, "month") == data_month)
 
-data_pain_meds <- meds_pain %>%
-    filter(time_surg < 24) %>%
-    add_count(millennium.id, med, med.dose.units, route, timing) %>%
-    rename(num_doses = n) %>%
-    group_by(pie.id, med, med.dose.units, route, timing, num_doses) %>%
-    summarize_at("med.dose", sum, na.rm = TRUE) %>%
-    arrange(pie.id, med)
 
-opiods <- med_lookup(c("narcotic analgesics", "narcotic analgesic combinations")) %>%
-    mutate_at("med.name", str_to_lower)
-
-data_opiods <- data_pain_meds %>%
-    filter(med %in% opiods$med.name)
-
-data_meds_cont <- read_data(dir_raw, "meds-inpt", FALSE) %>%
-    as.meds_inpt() %>%
+data_meds_cont <- meds_opiods %>%
+    filter(!is.na(event.tag))
     calc_runtime() %>%
-    summarize_data() %>%
-    filter(med %in% lookup_meds$med.name,
-           cum.dose > 0) %>%
-    inner_join(bari_id[c("millennium.id", "pie.id")], by = "millennium.id") %>%
-    select(pie.id, everything(), -millennium.id)
-
-
+    summarize_data() 
 
 # pca --------------------------------------------------
 
