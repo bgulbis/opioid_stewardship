@@ -91,18 +91,42 @@ meds_services <- meds_opiods %>%
     filter(med.datetime >= start.datetime,
            med.datetime < end.datetime) 
 
-miss_meds <- meds_opiods %>%
-    anti_join(meds_services, by = "event.id") %>%
-    left_join(demog[c("millennium.id", "service.dc")], by = "millennium.id")
-
-data_meds <- meds_services %>%
-    filter(is.na(event.tag))
+# miss_meds <- meds_opiods %>%
+#     anti_join(meds_services, by = "event.id") %>%
+#     left_join(demog[c("millennium.id", "service.dc")], by = "millennium.id")
 
 data_meds_cont <- meds_services %>%
     filter(!is.na(event.tag)) %>%
     calc_runtime() %>%
     summarize_data() 
 # add service
+
+df_meds <- meds_services %>%
+    filter(is.na(event.tag)) %>%
+    mutate(orig.order.id = order.parent.id) %>%
+    mutate_at("orig.order.id", na_if, y = 0) %>%
+    mutate_at("orig.order.id", funs(coalesce(., order.id)))
+
+mbo_orders <- concat_encounters(df_meds$orig.order.id)
+
+# run MBO query
+#   * 07_orders-details_opiods
+
+orders_opiods <- read_data(dir_raw, "orders", FALSE) %>%
+    rename(millennium.id = `Encounter Identifier`,
+           order.id = `Order Id`,
+           med.product = `Mnemonic (Product)`,
+           route = `Order Route`,
+           frequency = Frequency,
+           prn = `PRN Indicator`) %>%
+    select(-route) %>%
+    distinct() 
+
+data_meds <- df_meds %>%
+    left_join(orders_opiods, by = c("millennium.id", "orig.order.id" = "order.id"))
+
+# extract med strength / concentration
+
 
 # pca --------------------------------------------------
 
