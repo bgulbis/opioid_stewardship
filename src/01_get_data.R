@@ -29,7 +29,7 @@ pts <- read_data(dir_raw, "patients", FALSE) %>%
     as.patients() %>%
     filter(discharge.datetime >= mdy("1/1/2017", tz = tz))
 
-mbo_id <- concat_encounters(pts$millennium.id, 950)
+mbo_id <- concat_encounters(pts$millennium.id)
 
 # run MBO query
 #   * 02_meds-inpt_opiods
@@ -37,12 +37,15 @@ mbo_id <- concat_encounters(pts$millennium.id, 950)
 #   * 04_demographics_opiods
 
 # run EDW query
-#   * Identifiers - by Millennium Encounter ID
+#   * 05_identifiers_opiods
 
 ids <- read_data(dir_raw, "identifiers") %>%
-    as.id()
+    rename(millennium.id = `Millennium Encounter ID`,
+           pie.id = `PowerInsight Encounter Id`) %>%
+    distinct()
+    # as.id()
 
-edw_id <- concat_encounters(ids$pie.id, 950)
+edw_id <- concat_encounters(ids$pie.id)
 
 # service lines ----------------------------------------
 
@@ -51,14 +54,15 @@ edw_id <- concat_encounters(ids$pie.id, 950)
 
 services <- read_data(dir_raw, "services") %>%
     as.services() %>%
-    arrange(pie.id, start.datetime)
+    mutate_at("service", str_replace_all, pattern = c("Cardiology Service" = "Cardiology",
+                                                      "Obstetrics" = "Ob/Gyn Service")) %>%
+    tidy_data() %>%
+    left_join(ids, by = "pie.id") 
 
 demog <- read_data(dir_raw, "demographics", FALSE) %>%
     as.demographics(extras = list("service.dc" = "Medical Service (Curr)"))
 
-missing_service <- anti_join(ids, services, by = "pie.id") %>%
-    left_join(demog, by = "millennium.id") %>%
-    select(-fin, -person.id)
+
 # pain meds --------------------------------------------
 
 # opiods <- tibble(name = c("narcotic analgesics",
@@ -79,13 +83,26 @@ missing_service <- anti_join(ids, services, by = "pie.id") %>%
 
 meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
-    filter(floor_date(med.datetime, "month") == data_month)
+    filter(floor_date(med.datetime, "month") == data_month) %>%
+    distinct(millennium.id, event.id, med.datetime, .keep_all = TRUE)
 
+meds_services <- meds_opiods %>%
+    left_join(services, by = "millennium.id") %>%
+    filter(med.datetime >= start.datetime,
+           med.datetime < end.datetime) 
 
-data_meds_cont <- meds_opiods %>%
-    filter(!is.na(event.tag))
+miss_meds <- meds_opiods %>%
+    anti_join(meds_services, by = "event.id") %>%
+    left_join(demog[c("millennium.id", "service.dc")], by = "millennium.id")
+
+data_meds <- meds_services %>%
+    filter(is.na(event.tag))
+
+data_meds_cont <- meds_services %>%
+    filter(!is.na(event.tag)) %>%
     calc_runtime() %>%
     summarize_data() 
+# add service
 
 # pca --------------------------------------------------
 
@@ -99,7 +116,7 @@ pca_actions <- c("pca continuous rate dose" = "pca_rate",
                  "pca total demands" = "pca_demands")
 
 # filter for current month
-pain_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
+pain_pca <- read_data(dir_raw, "pca", FALSE) %>%
     as.pain_scores() %>%
     select(millennium.id:event.result) %>%
     mutate_at("event", str_replace_all, pattern = pca_actions) %>%
@@ -113,7 +130,10 @@ pain_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
                 "pca_rate"),
               as.numeric) %>%
     group_by(millennium.id, event.datetime) %>%
-    mutate(total_dose = sum(pca_delivered * pca_dose, pca_load, na.rm = TRUE))
+    mutate(total_dose = sum(pca_delivered * pca_dose, pca_load, na.rm = TRUE)) %>%
+    left_join(services, by = "millennium.id") %>%
+    filter(event.datetime >= start.datetime,
+           event.datetime < end.datetime) 
 
 data_pca <- pain_pca %>%
     group_by(millennium.id, pca_drug) %>%
