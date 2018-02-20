@@ -10,12 +10,20 @@ dir_raw <- paste0("data/raw/", month_abbrv)
 
 dirr::gzip_files(dir_raw)
 
-opiods <- med_lookup(c("narcotic analgesics", "narcotic analgesic combinations")) %>%
+opiods <- med_lookup(
+    c("narcotic analgesics", "narcotic analgesic combinations")
+) %>%
     distinct(med.name)
 
 opiods_lower <- mutate_at(opiods, "med.name", str_to_lower) 
 
-opiods_list <- sort(unique(c(opiods$med.name, opiods_lower$med.name, "FENTanyl", "OXYcodone")))
+opiods_list <- sort(
+    unique(
+        c(
+            opiods$med.name, opiods_lower$med.name, "FENTanyl", "OXYcodone"
+        )
+    )
+)
 
 mbo_opiods <- concat_encounters(opiods_list)
 
@@ -35,13 +43,16 @@ mbo_id <- concat_encounters(pts$millennium.id)
 #   * 02_meds-inpt_opiods
 #   * 03_pca_opiods
 #   * 04_demographics_opiods
+#   * 08_visits_opiods
 
 # run EDW query
 #   * 05_identifiers_opiods
 
 ids <- read_data(dir_raw, "identifiers") %>%
-    rename(millennium.id = `Millennium Encounter ID`,
-           pie.id = `PowerInsight Encounter Id`) %>%
+    rename(
+        millennium.id = `Millennium Encounter ID`,
+        pie.id = `PowerInsight Encounter Id`
+    ) %>%
     distinct()
     # as.id()
 
@@ -52,10 +63,17 @@ edw_id <- concat_encounters(ids$pie.id)
 # run EDW query
 #   * Service History
 
+visits <- read_data(dir_raw, "visits", FALSE) %>%
+    as.visits()
+
 services <- read_data(dir_raw, "services") %>%
     as.services() %>%
+    tidy_data() %>%
     left_join(ids, by = "pie.id") %>%
-    arrange(pie.id, start.datetime)
+    left_join(visits, by = "millennium.id") %>%
+    mutate(wrong.start = start.datetime < arrival.datetime)
+
+x <- summarize_at(services, "wrong.start", sum, na.rm = TRUE)
 
 demog <- read_data(dir_raw, "demographics", FALSE) %>%
     as.demographics(extras = list("service.dc" = "Medical Service (Curr)"))
@@ -65,30 +83,18 @@ missing_service <- anti_join(ids, services, by = "pie.id") %>%
 
 # pain meds --------------------------------------------
 
-# opiods <- tibble(name = c("narcotic analgesics",
-#                           "narcotic analgesic combinations"),
-#                  type = c(rep("class", 2), "med"),
-#                  group = "sched")
-# 
-# cont_opiods <- tibble(name = c("fentanyl",
-#                                "morphine",
-#                                "hydromorphone",
-#                                "mepiridine",
-#                                "remifentanyl",
-#                                "sufentanyl"),
-#                       type = "med",
-#                       group = "cont")
-
-# 129229777
+routes_po <- c("DHT", "GT", "JT", "NG", "NJ", "OGT", "PEG", "PO", "PR")
+routes_iv <- c("IM", "IV", "IV Central", "IVP", "IVPB", "EPIDURAL", "DIALYSIS")
+routes_top <- c("TOP", "Transdermal")
 
 meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
     filter(floor_date(med.datetime, "month") == data_month) %>%
     mutate(
         route.group = case_when(
-            route %in% c("DHT", "GT", "JT", "NG", "NJ", "OGT", "PEG", "PO", "PR") ~ "PO",
-            route %in% c("IM", "IV", "IV Central", "IVP", "IVPB", "EPIDURAL", "DIALYSIS") ~ "IV",
-            route %in% c("TOP", "Transdermal") ~ "TOP",
+            route %in% routes_po ~ "PO",
+            route %in% routes_iv ~ "IV",
+            route %in% routes_top ~ "TOP",
             route == "NASAL" ~ "NASAL"),
         orig.order.id = order.parent.id    
     ) %>%
@@ -116,96 +122,88 @@ neonatal_units <- c("HC A8N4", "HC A8NH", "HC NICE", "HC NICW")
 pedi_units <- c("HC A8OH", "HC A8PH", "HC CCN", "HC CSC", "HC PEMU", "HC PICU")
 
 meds_services <- meds_opiods %>%
-    left_join(services, by = "millennium.id") %>%
-    filter(med.datetime >= start.datetime,
-           med.datetime <= end.datetime) %>%
-    mutate(location.group = case_when(med.location %in% ed_units ~ "ed",
-                                      med.location %in% icu_units ~ "icu",
-                                      med.location %in% imu_units ~ "imu",
-                                      med.location %in% floor_units ~ "floor",
-                                      med.location %in% womens_units ~ "womens",
-                                      med.location %in% neonatal_units ~ "neo",
-                                      med.location %in% pedi_units ~ "pedi",
-                                      TRUE ~ "misc"))
+    # left_join(services, by = "millennium.id") %>%
+    # filter(med.datetime >= start.datetime,
+    #        med.datetime <= end.datetime) %>%
+    left_join(demog[c("millennium.id", "service.dc")], by = "millennium.id") %>%
+    mutate(
+        location.group = case_when(
+            med.location %in% ed_units ~ "ed",
+            med.location %in% icu_units ~ "icu",
+            med.location %in% imu_units ~ "imu",
+            med.location %in% floor_units ~ "floor",
+            med.location %in% womens_units ~ "womens",
+            med.location %in% neonatal_units ~ "neo",
+            med.location %in% pedi_units ~ "pedi",
+            TRUE ~ "misc"
+        )
+    )
 
 orders_opiods <- read_data(dir_raw, "orders", FALSE) %>%
-    rename(millennium.id = `Encounter Identifier`,
-           order.id = `Order Id`,
-           med.product = `Mnemonic (Product)`,
-           route = `Order Route`,
-           frequency = Frequency,
-           prn = `PRN Indicator`) %>%
+    rename(
+        millennium.id = `Encounter Identifier`,
+        order.id = `Order Id`,
+        med.product = `Mnemonic (Product)`,
+        route = `Order Route`,
+        frequency = Frequency,
+        prn = `PRN Indicator`
+    ) %>%
     select(-route) %>%
     distinct() 
 
-y <- data_meds %>% filter(med.dose.units == "mL") %>% distinct(med.product)
-
 data_meds <- meds_services %>%
-    filter(is.na(event.tag),
-           med.dose != 9999999) %>%
-    left_join(orders_opiods, by = c("millennium.id", "orig.order.id" = "order.id")) %>%
+    filter(
+        is.na(event.tag),
+        med.dose != 9999999
+    ) %>%
+    left_join(
+        orders_opiods, 
+        by = c("millennium.id", "orig.order.id" = "order.id")
+    ) %>%
     mutate_at("med.product", str_to_lower) %>%
+    calc_morph_eq()
+
+depart_max <- floor_date(data_month + months(1), "month")
+
+los_month <- visits %>%
+    group_by(millennium.id) %>%
     mutate(
-        tab.mg = case_when(
-            str_detect(med.product, "7.5-200mg") ~ 7.5,
-            str_detect(med.product, "325-10mg") ~ 10,
-            str_detect(med.product, "325-7.5") ~ 7.5,
-            str_detect(med.product, "325(mg)?-5") ~ 5,
-            str_detect(med.product, "300-30") ~ 30,
-            str_detect(med.product, "300-60") ~ 60,
-            str_detect(med.product, "50 mg") ~ 50,
-            str_detect(med.product, "325 mg -7.5 mg/15ml") ~ 0.5,
-            str_detect(med.product, "5 ml 120-12 mg/5 ml") ~ 2.4,
-            str_detect(med.product, "10 mg/ml") ~ 10,
-            str_detect(med.product, "2.5 mg/2.5 ml") ~ 1,
-            str_detect(med.product, "16.2-30") ~ 30,
-            str_detect(med.product, "12 microgram/hr patch") ~ 12,
-            str_detect(med.product, "25 microgram/hr patch") ~ 25,
-            str_detect(med.product, "50 microgram/hr patch") ~ 50,
-            str_detect(med.product, "75 microgram/hr patch") ~ 75,
-            str_detect(med.product, "100 microgram/hr patch") ~ 100),
-        dose.mg = case_when(
-            med.dose.units %in% c("tab", "mL", "supp", "patch") ~ tab.mg * med.dose,
-            TRUE ~ med.dose),
-        mme.iv = case_when(
-            med == "buprenorphine" & route.group == "TOP" ~ 3.8,
-            med == "buprenorphine" & route.group == "PO" ~ 3,
-            med == "butorphenol" ~ dose.mg * 5, 
-            med == "codeine" & route.group == "PO" ~ dose.mg * 0.1, 
-            med == "fentanyl" & route.group == "IV" ~ dose.mg * 0.1,
-            med == "fentanyl" & route.group == "NASAL" ~ dose.mg * 0.16 * 0.3,
-            med == "fentanyl" & route.group == "TOP" ~ dose.mg * 7.2 * 0.3,
-            med == "hydrocodone" ~ dose.mg * 1 * 0.3,
-            med == "hydromorphone" & route.group == "PO" ~ dose.mg * 1.3,
-            med == "hydromorphone" & route.group == "IV" ~ dose.mg * 6.7, 
-            med == "levorphanol" ~ dose.mg * 5, 
-            med == "mepridine" ~ dose.mg * 0.1,
-            med == "methadone" & route.group == "PO" ~ dose.mg * 3 * 0.3,
-            med == "morphine" & route.group == "PO" ~ dose.mg * 0.3,
-            med == "nalbuphine" ~ dose.mg * 1,
-            med == "opium" ~ dose.mg * 1 * 0.3,
-            med == "oxycodone" & route.group == "PO" ~ dose.mg * 0.5, 
-            med == "oxymorphone" & route.group == "PO" ~ dose.mg * 1,
-            med == "oxymorphone" & route.group == "IV" ~ dose.mg * 10, 
-            med == "pentazocine" ~ dose.mg * 0.37 * 0.3,
-            med == "tapentadol" ~ dose.mg * 0.1, 
-            med == "remifentanil" & med.dose.units == "mg" ~ dose.mg * 100, # dose recorded in mg; assume equiv with fentanyl
-            med == "sufentanil" ~ dose.mg * 0.5, # 100mcg = 50mg
-            med == "tramdaol" ~ dose.mg * 0.1 * 0.3,
-            TRUE ~ dose.mg)
-        )
+        arrive = if_else(
+            arrival.datetime < data_month,
+            data_month,
+            arrival.datetime
+        ),
+        depart = if_else(
+            floor_date(discharge.datetime, "month") > data_month,
+            depart_max,
+            discharge.datetime
+        ),
+        los.month = difftime(depart, arrive, units = "days")
+    ) %>%
+    select(millennium.id, los.month)
 
-z <- filter(data_meds, is.na(dose.mg))
+data_mme_service <- data_meds %>%
+    group_by(millennium.id, service.dc) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    left_join(los_month, by = "millennium.id") %>%
+    mutate_at("los.month", as.numeric) %>%
+    mutate(mme.day = mme.iv / los.month)
 
-# sources:
-# Lexicomp - Opiod Agonist Conversion (from drug, to Morphine IM)
-# https://www.cms.gov/Medicare/Prescription-Drug-Coverage/PrescriptionDrugCovContra/Downloads/Opioid-Morphine-EQ-Conversion-Factors-March-2015.pdf
-#   * note, doses listed in oral mme, converted to iv mme by * 0.3
-# http://clincalc.com/opioids/ - sufentanil
+medians_mme <- data_mme_service %>%
+    group_by(service.dc) %>%
+    summarize_at("mme.day", median, na.rm = TRUE) %>%
+    arrange(desc(mme.day)) %>%
+    mutate_at("service.dc", as_factor)
 
+data_mme_service %>%
+    filter(!is.na(mme.day)) %>%
+    mutate_at("service.dc", factor, levels = levels(medians_mme$service.dc)) %>%
+    mutate_at("service.dc", fct_rev) %>%
+    ggplot(aes(x = service.dc, y = mme.day)) +
+    geom_boxplot(varwidth = TRUE) +
+    coord_flip() +
+    themebg::theme_bg()
 
-
-# extract med strength / concentration
 
 # x %>%
 #     # filter(med %in% c("remifentanil", "sufentanil", "meperidine")) %>%
@@ -228,20 +226,22 @@ z <- filter(data_meds, is.na(dose.mg))
 #     select(millennium.id, event.id, med, med.datetime, start.datetime:service.from)
 
 data_meds_cont <- meds_opiods %>%
-    filter(!is.na(event.tag))
+    filter(!is.na(event.tag)) %>%
     calc_runtime() %>%
     summarize_data() 
     
 # pca --------------------------------------------------
 
-pca_actions <- c("pca continuous rate dose" = "pca_rate",
-                 "pca demand dose unit" = "pca_dose_unit",
-                 "pca demand dose" = "pca_dose",
-                 "pca doses delivered" = "pca_delivered",
-                 "pca drug" = "pca_drug",
-                 "pca loading dose" = "pca_load",
-                 "pca lockout interval \\(minutes\\)" = "pca_lockout",
-                 "pca total demands" = "pca_demands")
+pca_actions <- c(
+    "pca continuous rate dose" = "pca_rate",
+    "pca demand dose unit" = "pca_dose_unit",
+    "pca demand dose" = "pca_dose",
+    "pca doses delivered" = "pca_delivered",
+    "pca drug" = "pca_drug",
+    "pca loading dose" = "pca_load",
+    "pca lockout interval \\(minutes\\)" = "pca_lockout",
+    "pca total demands" = "pca_demands"
+)
 
 # filter for current month
 pain_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
@@ -250,13 +250,17 @@ pain_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
     mutate_at("event", str_replace_all, pattern = pca_actions) %>%
     distinct(millennium.id, event.datetime, event, .keep_all = TRUE) %>%
     spread(event, event.result) %>%
-    mutate_at(c("pca_demands",
-                "pca_dose",
-                "pca_delivered",
-                "pca_load",
-                "pca_lockout",
-                "pca_rate"),
-              as.numeric) %>%
+    mutate_at(
+        c(
+            "pca_demands",
+            "pca_dose",
+            "pca_delivered",
+            "pca_load",
+            "pca_lockout",
+            "pca_rate"
+        ),
+        as.numeric
+    ) %>%
     group_by(millennium.id, event.datetime) %>%
     mutate(total_dose = sum(pca_delivered * pca_dose, pca_load, na.rm = TRUE))
 
