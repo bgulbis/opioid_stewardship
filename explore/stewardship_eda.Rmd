@@ -1,0 +1,51 @@
+---
+title: "Opiod Stewardship"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+    html_document:
+        code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(themebg)
+
+data_mme <- list.files("../data/tidy/", full.names = TRUE) %>%
+    map_df(read_rds)
+
+```
+
+```{r}
+
+medians_mme <- data_mme %>%
+    group_by(millennium.id) %>%
+    mutate_at("total", funs(if_else(!is.na(los.month), . / los.month, .))) %>%
+    group_by(service.dc) %>%
+    summarize_at("total", median, na.rm = TRUE) %>%
+    arrange(desc(total)) %>%
+    mutate_at("service.dc", as_factor)
+
+d <- data_mme %>%
+    group_by(millennium.id) %>%
+    mutate_at("total", funs(if_else(!is.na(los.month), . / los.month, .))) %>%
+    filter(total > 0) %>%
+    mutate_at("service.dc", factor, levels = levels(medians_mme$service.dc)) %>%
+    mutate_at("service.dc", fct_rev) %>%
+    ggplot(aes(x = service.dc, y = total)) +
+    geom_boxplot(varwidth = TRUE) +
+    theme_bg()
+    
+d +
+    coord_flip()
+```
+
+```{r}
+d + 
+    coord_flip(ylim = c(0, 100))
+```
+
