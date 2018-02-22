@@ -151,7 +151,7 @@ orders_opiods <- read_data(dir_raw, "orders", FALSE) %>%
     select(-route) %>%
     distinct() 
 
-data_meds <- meds_services %>%
+meds_intermit <- meds_opiods %>%
     filter(
         is.na(event.tag),
         med.dose != 9999999
@@ -165,7 +165,9 @@ data_meds <- meds_services %>%
 
 depart_max <- floor_date(data_month + months(1), "month")
 
-los_month <- visits %>%
+los_month <- demog %>%
+    # select(millennium.id:length.stay) %>%
+    left_join(visits, by = c("millennium.id", "facility", "visit.type")) %>%
     group_by(millennium.id) %>%
     mutate(
         arrive = if_else(
@@ -180,29 +182,30 @@ los_month <- visits %>%
         ),
         los.month = difftime(depart, arrive, units = "days")
     ) %>%
-    select(millennium.id, los.month)
+    mutate_at("los.month", as.numeric) 
 
-data_mme_service <- data_meds %>%
-    group_by(millennium.id, service.dc) %>%
+data_mme_int <- meds_intermit %>%
+    group_by(millennium.id) %>%
     summarize_at("mme.iv", sum, na.rm = TRUE) %>%
-    left_join(los_month, by = "millennium.id") %>%
-    mutate_at("los.month", as.numeric) %>%
-    mutate(mme.day = mme.iv / los.month)
+    mutate(type = "intermittent")
+    # left_join(los_month, by = "millennium.id") %>%
+    # mutate_at("los.month", as.numeric) %>%
+    # mutate(mme.day = mme.iv / los.month)
 
-medians_mme <- data_mme_service %>%
-    group_by(service.dc) %>%
-    summarize_at("mme.day", median, na.rm = TRUE) %>%
-    arrange(desc(mme.day)) %>%
-    mutate_at("service.dc", as_factor)
+# medians_mme <- data_mme %>%
+#     group_by(service.dc) %>%
+#     summarize_at("mme.day", median, na.rm = TRUE) %>%
+#     arrange(desc(mme.day)) %>%
+#     mutate_at("service.dc", as_factor)
 
-data_mme_service %>%
-    filter(!is.na(mme.day)) %>%
-    mutate_at("service.dc", factor, levels = levels(medians_mme$service.dc)) %>%
-    mutate_at("service.dc", fct_rev) %>%
-    ggplot(aes(x = service.dc, y = mme.day)) +
-    geom_boxplot(varwidth = TRUE) +
-    coord_flip() +
-    themebg::theme_bg()
+# data_mme_service %>%
+#     filter(!is.na(mme.day)) %>%
+#     mutate_at("service.dc", factor, levels = levels(medians_mme$service.dc)) %>%
+#     mutate_at("service.dc", fct_rev) %>%
+#     ggplot(aes(x = service.dc, y = mme.day)) +
+#     geom_boxplot(varwidth = TRUE) +
+#     coord_flip() +
+#     themebg::theme_bg()
 
 
 # x %>%
@@ -225,26 +228,52 @@ data_mme_service %>%
 #     inner_join(services, by = "millennium.id") %>%
 #     select(millennium.id, event.id, med, med.datetime, start.datetime:service.from)
 
-data_meds_cont <- meds_opiods %>%
-    filter(!is.na(event.tag)) %>%
+data_mme_cont <- meds_opiods %>%
+    filter(!is.na(event.tag),
+           floor_date(med.datetime, "month") == data_month) %>%
     calc_runtime() %>%
-    summarize_data() 
+    summarize_data(data_meds_cont) %>%
+    mutate(
+        mme.iv = case_when(
+            med == "fentanyl" ~ cum.dose * 0.1,
+            med == "hydromorphone" ~ cum.dose * 6.7,
+            TRUE ~ cum.dose
+        )
+    ) %>%
+    group_by(millennium.id) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    mutate(type = "continuous")
     
+# medians_drip_mme <- data_meds_cont %>%
+#     group_by(service.dc) %>%
+#     summarize_at("mme.iv", median, na.rm = TRUE) %>%
+#     arrange(desc(mme.iv)) %>%
+#     mutate_at("service.dc", as_factor)
+
+# data_meds_cont %>%
+#     filter(!is.na(mme.iv)) %>%
+#     mutate_at("service.dc", factor, levels = levels(medians_drip_mme$service.dc)) %>%
+#     mutate_at("service.dc", fct_rev) %>%
+#     ggplot(aes(x = service.dc, y = mme.iv)) +
+#     geom_boxplot(varwidth = TRUE) +
+#     coord_flip() +
+#     themebg::theme_bg()
+# 
 # pca --------------------------------------------------
 
 pca_actions <- c(
-    "pca continuous rate dose" = "pca_rate",
-    "pca demand dose unit" = "pca_dose_unit",
-    "pca demand dose" = "pca_dose",
-    "pca doses delivered" = "pca_delivered",
-    "pca drug" = "pca_drug",
-    "pca loading dose" = "pca_load",
-    "pca lockout interval \\(minutes\\)" = "pca_lockout",
-    "pca total demands" = "pca_demands"
+    "pca continuous rate dose" = "pca.rate",
+    "pca demand dose unit" = "pca.dose.unit",
+    "pca demand dose" = "pca.dose",
+    "pca doses delivered" = "pca.delivered",
+    "pca drug" = "pca.drug",
+    "pca loading dose" = "pca.load",
+    "pca lockout interval \\(minutes\\)" = "pca.lockout",
+    "pca total demands" = "pca.demands"
 )
 
 # filter for current month
-pain_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
+pain_pca <- read_data(dir_raw, "pca", FALSE) %>%
     as.pain_scores() %>%
     select(millennium.id:event.result) %>%
     mutate_at("event", str_replace_all, pattern = pca_actions) %>%
@@ -252,21 +281,56 @@ pain_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
     spread(event, event.result) %>%
     mutate_at(
         c(
-            "pca_demands",
-            "pca_dose",
-            "pca_delivered",
-            "pca_load",
-            "pca_lockout",
-            "pca_rate"
+            "pca.demands",
+            "pca.dose",
+            "pca.delivered",
+            "pca.load",
+            "pca.lockout",
+            "pca.rate"
         ),
         as.numeric
     ) %>%
     group_by(millennium.id, event.datetime) %>%
-    mutate(total_dose = sum(pca_delivered * pca_dose, pca_load, na.rm = TRUE))
+    filter(!is.na(pca.dose),
+           floor_date(event.datetime, "month") == data_month) %>%
+    mutate(total.dose = sum(pca.delivered * pca.dose, pca.load, na.rm = TRUE))
 
-data_pca <- pain_pca %>%
-    group_by(millennium.id, pca_drug) %>%
-    summarize_at(c("pca_demands",
-                   "pca_delivered",
-                   "total_dose"),
-                 sum, na.rm = TRUE)
+data_mme_pca <- pain_pca %>%
+    group_by(millennium.id) %>%
+    fill(pca.drug) %>%
+    group_by(millennium.id, pca.drug) %>%
+    summarize_at(
+        c(
+            "pca.demands",
+            "pca.delivered",
+            "total.dose"
+        ),
+        sum, 
+        na.rm = TRUE
+    ) %>%
+    mutate(
+        mme.iv = case_when(
+            str_detect(pca.drug, "Fentanyl") ~ total.dose * 0.1,
+            str_detect(pca.drug, "Hydromorphone") ~ total.dose * 6.7,
+            str_detect(pca.drug, "Morphine") ~ total.dose
+        )
+    ) %>%
+    filter(!is.na(mme.iv)) %>%
+    group_by(millennium.id) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    mutate(type = "pca")
+
+
+data_mme <- data_mme_int %>%
+    bind_rows(data_mme_cont, data_mme_pca) %>%
+    filter(mme.iv > 0) %>%
+    spread(type, mme.iv) %>%
+    group_by(millennium.id) %>%
+    mutate(total = sum(intermittent, continuous, pca, na.rm = TRUE)) %>%
+    left_join(los_month, by = "millennium.id") 
+
+write_rds(
+    data_mme, 
+    paste0("data/tidy/", month_abbrv, "_mme.Rds"),
+    "gz"
+)
