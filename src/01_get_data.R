@@ -5,6 +5,7 @@ library(edwr)
 tz <- "US/Central"
 data_month <- mdy("1/1/2017", tz = tz)
 month_abbrv <- format(data_month, "%Y-%m")
+depart_max <- floor_date(data_month + months(1), "month")
 
 dir_raw <- paste0("data/raw/", month_abbrv)
 
@@ -44,6 +45,7 @@ mbo_id <- concat_encounters(pts$millennium.id)
 #   * 03_pca_opiods
 #   * 04_demographics_opiods
 #   * 08_visits_opiods
+#   * 09_attendings_opiods
 
 # run EDW query
 #   * 05_identifiers_opiods
@@ -58,13 +60,54 @@ ids <- read_data(dir_raw, "identifiers") %>%
 
 edw_id <- concat_encounters(ids$pie.id)
 
+# ed visits --------------------------------------------
+
+demog <- read_data(dir_raw, "demographics", FALSE) %>%
+    as.demographics(extras = list("service.dc" = "Medical Service (Curr)"))
+
+ed_id <- demog %>%
+    filter(visit.type == "Emergency") %>%
+    left_join(ids, by = "millennium.id")
+
+mbo_ed <- concat_encounters(ed_id$millennium.id)
+# edw_ed <- concat_encounters(ed_id$pie.id)
+
+# run MBO query
+#   * 10_discharge-rx_opiods
+
+# los -------------------------------------------------
+
+visits <- read_data(dir_raw, "visits", FALSE) %>%
+    as.visits()
+
+los_month <- demog %>%
+    # select(millennium.id:length.stay) %>%
+    left_join(visits, by = c("millennium.id", "facility", "visit.type")) %>%
+    group_by(millennium.id) %>%
+    mutate(
+        arrive = if_else(
+            arrival.datetime < data_month,
+            data_month,
+            arrival.datetime
+        ),
+        depart = if_else(
+            floor_date(discharge.datetime, "month") > data_month,
+            depart_max,
+            discharge.datetime
+        ),
+        los.month = difftime(depart, arrive, units = "days")
+    ) %>%
+    mutate_at("los.month", as.numeric) 
+
+# attendings -------------------------------------------
+
+md <- read_data(dir_raw, "attending", FALSE) %>%
+    as.md()
+
 # service lines ----------------------------------------
 
 # run EDW query
 #   * Service History
-
-visits <- read_data(dir_raw, "visits", FALSE) %>%
-    as.visits()
 
 services <- read_data(dir_raw, "services") %>%
     as.services() %>%
@@ -73,41 +116,17 @@ services <- read_data(dir_raw, "services") %>%
     left_join(visits, by = "millennium.id") %>%
     mutate(wrong.start = start.datetime < arrival.datetime)
 
-x <- summarize_at(services, "wrong.start", sum, na.rm = TRUE)
+# x <- summarize_at(services, "wrong.start", sum, na.rm = TRUE)
 
-demog <- read_data(dir_raw, "demographics", FALSE) %>%
-    as.demographics(extras = list("service.dc" = "Medical Service (Curr)"))
 
-missing_service <- anti_join(ids, services, by = "pie.id") %>%
-    left_join(demog, by = "millennium.id") 
+# missing_service <- anti_join(ids, services, by = "pie.id") %>%
+#     left_join(demog, by = "millennium.id") 
 
 # pain meds --------------------------------------------
 
 routes_po <- c("DHT", "GT", "JT", "NG", "NJ", "OGT", "PEG", "PO", "PR")
 routes_iv <- c("IM", "IV", "IV Central", "IVP", "IVPB", "EPIDURAL", "DIALYSIS")
 routes_top <- c("TOP", "Transdermal")
-
-meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
-    as.meds_inpt() %>%
-    filter(floor_date(med.datetime, "month") == data_month) %>%
-    mutate(
-        route.group = case_when(
-            route %in% routes_po ~ "PO",
-            route %in% routes_iv ~ "IV",
-            route %in% routes_top ~ "TOP",
-            route == "NASAL" ~ "NASAL"),
-        orig.order.id = order.parent.id    
-    ) %>%
-    mutate_at("orig.order.id", na_if, y = 0) %>%
-    mutate_at("orig.order.id", funs(coalesce(., order.id)))
-
-df_meds <- meds_opiods %>%
-    filter(is.na(event.tag)) 
-
-mbo_orders <- concat_encounters(df_meds$orig.order.id)
-
-# run MBO query
-#   * 07_orders-details_opiods
 
 ed_units <- c("HH VUHH", "HH EDHH", "HH EDTR", "HH EREV", "HH OBEC", "HC EDPD")
 icu_units <- c("HH CCU", "HH CVICU", "HH HFIC", "HH MICU",
@@ -121,11 +140,19 @@ womens_units <- c("HH WC5", "HH WC6N", "HH WCAN")
 neonatal_units <- c("HC A8N4", "HC A8NH", "HC NICE", "HC NICW")
 pedi_units <- c("HC A8OH", "HC A8PH", "HC CCN", "HC CSC", "HC PEMU", "HC PICU")
 
-meds_services <- meds_opiods %>%
-    # left_join(services, by = "millennium.id") %>%
-    # filter(med.datetime >= start.datetime,
-    #        med.datetime <= end.datetime) %>%
-    left_join(demog[c("millennium.id", "service.dc")], by = "millennium.id") %>%
+meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
+    as.meds_inpt() %>%
+    filter(floor_date(med.datetime, "month") == data_month) %>%
+    mutate(
+        route.group = case_when(
+            route %in% routes_po ~ "PO",
+            route %in% routes_iv ~ "IV",
+            route %in% routes_top ~ "TOP",
+            route == "NASAL" ~ "NASAL"),
+        orig.order.id = order.parent.id    
+    ) %>%
+    mutate_at("orig.order.id", na_if, y = 0) %>%
+    mutate_at("orig.order.id", funs(coalesce(., order.id))) %>%
     mutate(
         location.group = case_when(
             med.location %in% ed_units ~ "ed",
@@ -138,6 +165,14 @@ meds_services <- meds_opiods %>%
             TRUE ~ "misc"
         )
     )
+
+df_meds <- meds_opiods %>%
+    filter(is.na(event.tag)) 
+
+mbo_orders <- concat_encounters(df_meds$orig.order.id)
+
+# run MBO query
+#   * 07_orders-details_opiods
 
 orders_opiods <- read_data(dir_raw, "orders", FALSE) %>%
     rename(
@@ -163,70 +198,17 @@ meds_intermit <- meds_opiods %>%
     mutate_at("med.product", str_to_lower) %>%
     calc_morph_eq()
 
-depart_max <- floor_date(data_month + months(1), "month")
-
-los_month <- demog %>%
-    # select(millennium.id:length.stay) %>%
-    left_join(visits, by = c("millennium.id", "facility", "visit.type")) %>%
-    group_by(millennium.id) %>%
-    mutate(
-        arrive = if_else(
-            arrival.datetime < data_month,
-            data_month,
-            arrival.datetime
-        ),
-        depart = if_else(
-            floor_date(discharge.datetime, "month") > data_month,
-            depart_max,
-            discharge.datetime
-        ),
-        los.month = difftime(depart, arrive, units = "days")
-    ) %>%
-    mutate_at("los.month", as.numeric) 
+meds_md <- meds_intermit %>%
+    left_join(md, by = "millennium.id") %>%
+    filter(
+        is.na(attending) |
+            (med.datetime >= md.start & med.datetime <= md.stop)
+    )
 
 data_mme_int <- meds_intermit %>%
-    group_by(millennium.id) %>%
+    group_by(millennium.id, route.group) %>%
     summarize_at("mme.iv", sum, na.rm = TRUE) %>%
     mutate(type = "intermittent")
-    # left_join(los_month, by = "millennium.id") %>%
-    # mutate_at("los.month", as.numeric) %>%
-    # mutate(mme.day = mme.iv / los.month)
-
-# medians_mme <- data_mme %>%
-#     group_by(service.dc) %>%
-#     summarize_at("mme.day", median, na.rm = TRUE) %>%
-#     arrange(desc(mme.day)) %>%
-#     mutate_at("service.dc", as_factor)
-
-# data_mme_service %>%
-#     filter(!is.na(mme.day)) %>%
-#     mutate_at("service.dc", factor, levels = levels(medians_mme$service.dc)) %>%
-#     mutate_at("service.dc", fct_rev) %>%
-#     ggplot(aes(x = service.dc, y = mme.day)) +
-#     geom_boxplot(varwidth = TRUE) +
-#     coord_flip() +
-#     themebg::theme_bg()
-
-
-# x %>%
-#     # filter(med %in% c("remifentanil", "sufentanil", "meperidine")) %>%
-#     filter(!(med %in% c("acetaminophen-hydrocodone", "fentanyl", 
-#                         "hydromorphone", "oxycodone", "tramadol",
-#                         "methadone", "acetaminophen-codeine", "acetaminophen-oxycodone"))) %>%
-#     ggplot(aes(x = location.group)) +
-#     geom_bar() +
-#     facet_wrap(~ med) +
-#     coord_flip() +
-#     themebg::theme_bg()
-
-
-# miss_meds <- meds_opiods %>%
-#     anti_join(meds_services, by = "event.id") %>%
-#     left_join(demog[c("millennium.id", "service.dc")], by = "millennium.id")
-
-# y <- miss_meds %>%
-#     inner_join(services, by = "millennium.id") %>%
-#     select(millennium.id, event.id, med, med.datetime, start.datetime:service.from)
 
 data_mme_cont <- meds_opiods %>%
     filter(!is.na(event.tag),
@@ -244,21 +226,6 @@ data_mme_cont <- meds_opiods %>%
     summarize_at("mme.iv", sum, na.rm = TRUE) %>%
     mutate(type = "continuous")
     
-# medians_drip_mme <- data_meds_cont %>%
-#     group_by(service.dc) %>%
-#     summarize_at("mme.iv", median, na.rm = TRUE) %>%
-#     arrange(desc(mme.iv)) %>%
-#     mutate_at("service.dc", as_factor)
-
-# data_meds_cont %>%
-#     filter(!is.na(mme.iv)) %>%
-#     mutate_at("service.dc", factor, levels = levels(medians_drip_mme$service.dc)) %>%
-#     mutate_at("service.dc", fct_rev) %>%
-#     ggplot(aes(x = service.dc, y = mme.iv)) +
-#     geom_boxplot(varwidth = TRUE) +
-#     coord_flip() +
-#     themebg::theme_bg()
-# 
 # pca --------------------------------------------------
 
 pca_actions <- c(
@@ -326,7 +293,8 @@ data_mme <- data_mme_int %>%
     filter(mme.iv > 0) %>%
     spread(type, mme.iv) %>%
     group_by(millennium.id) %>%
-    mutate(total = sum(intermittent, continuous, pca, na.rm = TRUE)) %>%
+    mutate(total = sum(intermittent, continuous, pca, na.rm = TRUE),
+           data.month = data_month) %>%
     left_join(los_month, by = "millennium.id") 
 
 write_rds(
@@ -334,3 +302,8 @@ write_rds(
     paste0("data/tidy/", month_abbrv, "_mme.Rds"),
     "gz"
 )
+
+# IV intermittent only
+# attending
+# nurse unit
+# ed patients - discharge prescription
