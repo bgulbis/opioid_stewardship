@@ -12,7 +12,10 @@ dir_raw <- paste0("data/raw/", month_abbrv)
 dirr::gzip_files(dir_raw)
 
 opiods <- med_lookup(
-    c("narcotic analgesics", "narcotic analgesic combinations")
+    c(
+        "narcotic analgesics", 
+        "narcotic analgesic combinations"
+    )
 ) %>%
     distinct(med.name)
 
@@ -21,7 +24,10 @@ opiods_lower <- mutate_at(opiods, "med.name", str_to_lower)
 opiods_list <- sort(
     unique(
         c(
-            opiods$med.name, opiods_lower$med.name, "FENTanyl", "OXYcodone"
+            opiods$med.name, 
+            opiods_lower$med.name, 
+            "FENTanyl", 
+            "OXYcodone"
         )
     )
 )
@@ -82,7 +88,10 @@ visits <- read_data(dir_raw, "visits", FALSE) %>%
 
 los_month <- demog %>%
     # select(millennium.id:length.stay) %>%
-    left_join(visits, by = c("millennium.id", "facility", "visit.type")) %>%
+    left_join(
+        visits, 
+        by = c("millennium.id", "facility", "visit.type")
+    ) %>%
     group_by(millennium.id) %>%
     mutate(
         arrive = if_else(
@@ -124,21 +133,93 @@ services <- read_data(dir_raw, "services") %>%
 
 # pain meds --------------------------------------------
 
-routes_po <- c("DHT", "GT", "JT", "NG", "NJ", "OGT", "PEG", "PO", "PR")
-routes_iv <- c("IM", "IV", "IV Central", "IVP", "IVPB", "EPIDURAL", "DIALYSIS")
+routes_po <- c(
+    "DHT",
+    "GT", 
+    "JT", 
+    "NG", 
+    "NJ", 
+    "OGT",
+    "PEG",
+    "PO", 
+    "PR"
+)
+
+routes_iv <- c(
+    "IM", 
+    "IV", 
+    "IV Central", 
+    "IVP", 
+    "IVPB", 
+    "EPIDURAL",
+    "DIALYSIS"
+)
+
 routes_top <- c("TOP", "Transdermal")
 
-ed_units <- c("HH VUHH", "HH EDHH", "HH EDTR", "HH EREV", "HH OBEC", "HC EDPD")
-icu_units <- c("HH CCU", "HH CVICU", "HH HFIC", "HH MICU",
-               "HH STIC", "HH 7J", "HH NVIC", "HH TSIC")
-imu_units <- c("HVI CIMU", "HH CVIMU", "HH HFIM", "HH MIMU",
-               "HH SIMU", "HH 3CIM", "HH NIMU", "HH STRK")
-floor_units <- c("HH 3JP", "HH 3CP", "HH 4WCP", "HH ACE", "HH 5ECP", "HH 5JP",
-                 "HH 5WCP", "HH 6EJP", "HH 6WJP", "HH 8NJP", "HH EMU", "HH NEU",
-                 "HH 8WJP", "HH 9EJP", "HH 9WJP", "HH REHA", "HH TCF")
+ed_units <- c(
+    "HH VUHH", 
+    "HH EDHH",
+    "HH EDTR",
+    "HH EREV", 
+    "HH OBEC", 
+    "HC EDPD"
+)
+
+icu_units <- c(
+    "HH CCU", 
+    "HH CVICU", 
+    "HH HFIC", 
+    "HH MICU",
+    "HH STIC", 
+    "HH 7J", 
+    "HH NVIC", 
+    "HH TSIC"
+)
+
+imu_units <- c(
+    "HVI CIMU", 
+    "HH CVIMU", 
+    "HH HFIM", 
+    "HH MIMU",
+    "HH SIMU", 
+    "HH 3CIM", 
+    "HH NIMU", 
+    "HH STRK"
+)
+
+floor_units <- c(
+    "HH 3JP", 
+    "HH 3CP", 
+    "HH 4WCP", 
+    "HH ACE", 
+    "HH 5ECP", 
+    "HH 5JP",
+    "HH 5WCP",
+    "HH 6EJP", 
+    "HH 6WJP",
+    "HH 8NJP", 
+    "HH EMU", 
+    "HH NEU",
+    "HH 8WJP", 
+    "HH 9EJP", 
+    "HH 9WJP", 
+    "HH REHA", 
+    "HH TCF"
+)
+
 womens_units <- c("HH WC5", "HH WC6N", "HH WCAN")
+
 neonatal_units <- c("HC A8N4", "HC A8NH", "HC NICE", "HC NICW")
-pedi_units <- c("HC A8OH", "HC A8PH", "HC CCN", "HC CSC", "HC PEMU", "HC PICU")
+
+pedi_units <- c(
+    "HC A8OH", 
+    "HC A8PH",
+    "HC CCN",
+    "HC CSC", 
+    "HC PEMU",
+    "HC PICU"
+)
 
 meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
@@ -205,14 +286,43 @@ meds_md <- meds_intermit %>%
             (med.datetime >= md.start & med.datetime <= md.stop)
     )
 
-data_mme_int <- meds_intermit %>%
-    group_by(millennium.id, route.group) %>%
-    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
-    mutate(type = "intermittent")
+mme_int <- function(x, type, ...) {
+    group_by <- quos(...)
+    
+    x %>%
+        group_by(!!!group_by) %>%
+        summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+        mutate(type = type)
+}
+
+data_mme_int <- mme_int(
+    meds_intermit, 
+    "intermittent",
+    millennium.id, 
+    route.group
+) 
+
+data_mme_int_md <- mme_int(
+    meds_md, 
+    "md",
+    millennium.id, 
+    route.group, 
+    attending
+)
+
+data_mme_int_location <- mme_int(
+    meds_intermit, 
+    "location",
+    millennium.id, 
+    route.group, 
+    med.location
+) 
 
 data_mme_cont <- meds_opiods %>%
-    filter(!is.na(event.tag),
-           floor_date(med.datetime, "month") == data_month) %>%
+    filter(
+        !is.na(event.tag),
+        floor_date(med.datetime, "month") == data_month
+    ) %>%
     calc_runtime() %>%
     summarize_data(data_meds_cont) %>%
     mutate(
@@ -258,9 +368,17 @@ pain_pca <- read_data(dir_raw, "pca", FALSE) %>%
         as.numeric
     ) %>%
     group_by(millennium.id, event.datetime) %>%
-    filter(!is.na(pca.dose),
-           floor_date(event.datetime, "month") == data_month) %>%
-    mutate(total.dose = sum(pca.delivered * pca.dose, pca.load, na.rm = TRUE))
+    filter(
+        !is.na(pca.dose),
+        floor_date(event.datetime, "month") == data_month
+    ) %>%
+    mutate(
+        total.dose = sum(
+            pca.delivered * pca.dose, 
+            pca.load, 
+            na.rm = TRUE
+        )
+    )
 
 data_mme_pca <- pain_pca %>%
     group_by(millennium.id) %>%
@@ -287,21 +405,18 @@ data_mme_pca <- pain_pca %>%
     summarize_at("mme.iv", sum, na.rm = TRUE) %>%
     mutate(type = "pca")
 
+dirr::save_rds(paste0("data/tidy/", month_abbrv), pattern = "data_")
 
-data_mme <- data_mme_int %>%
-    bind_rows(data_mme_cont, data_mme_pca) %>%
-    filter(mme.iv > 0) %>%
-    spread(type, mme.iv) %>%
-    group_by(millennium.id) %>%
-    mutate(total = sum(intermittent, continuous, pca, na.rm = TRUE),
-           data.month = data_month) %>%
-    left_join(los_month, by = "millennium.id") 
-
-write_rds(
-    data_mme, 
-    paste0("data/tidy/", month_abbrv, "_mme.Rds"),
-    "gz"
-)
+# data_mme <- data_mme_int %>%
+#     bind_rows(data_mme_cont, data_mme_pca) %>%
+#     filter(mme.iv > 0) %>%
+#     spread(type, mme.iv) %>%
+#     group_by(millennium.id) %>%
+#     mutate(
+#         total = sum(intermittent, continuous, pca, na.rm = TRUE),
+#         data.month = data_month
+#     ) %>%
+#     left_join(los_month, by = "millennium.id") 
 
 # IV intermittent only
 # attending
