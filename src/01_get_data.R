@@ -3,9 +3,9 @@ library(lubridate)
 library(edwr)
 
 tz <- "US/Central"
-data_month <- mdy("1/1/2017", tz = tz)
-month_abbrv <- format(data_month, "%Y-%m")
-depart_max <- floor_date(data_month + months(1), "month")
+month_data <- mdy("1/1/2017", tz = tz)
+month_abbrv <- format(month_data, "%Y-%m")
+depart_max <- floor_date(month_data + months(1), "month")
 
 dir_raw <- paste0("data/raw/", month_abbrv)
 
@@ -95,12 +95,12 @@ los_month <- demog %>%
     group_by(millennium.id) %>%
     mutate(
         arrive = if_else(
-            arrival.datetime < data_month,
-            data_month,
+            arrival.datetime < month_data,
+            month_data,
             arrival.datetime
         ),
         depart = if_else(
-            floor_date(discharge.datetime, "month") > data_month,
+            floor_date(discharge.datetime, "month") > month_data,
             depart_max,
             discharge.datetime
         ),
@@ -223,7 +223,7 @@ pedi_units <- c(
 
 meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
-    filter(floor_date(med.datetime, "month") == data_month) %>%
+    filter(floor_date(med.datetime, "month") == month_data) %>%
     mutate(
         route.group = case_when(
             route %in% routes_po ~ "PO",
@@ -293,10 +293,13 @@ mme_int <- function(x, type, ...) {
     x %>%
         group_by(!!!group_by) %>%
         summarize_at("mme.iv", sum, na.rm = TRUE) %>%
-        mutate(type = type)
+        mutate(
+            type = type,
+            data.month = month_data
+        )
 }
 
-data_mme_int <- mme_int(
+data_mme_int_patient <- mme_int(
     meds_intermit, 
     "intermittent",
     millennium.id, 
@@ -322,7 +325,7 @@ data_mme_int_location <- mme_int(
 data_mme_cont <- meds_opiods %>%
     filter(
         !is.na(event.tag),
-        floor_date(med.datetime, "month") == data_month
+        floor_date(med.datetime, "month") == month_data
     ) %>%
     calc_runtime() %>%
     summarize_data(data_meds_cont) %>%
@@ -335,7 +338,10 @@ data_mme_cont <- meds_opiods %>%
     ) %>%
     group_by(millennium.id) %>%
     summarize_at("mme.iv", sum, na.rm = TRUE) %>%
-    mutate(type = "continuous")
+    mutate(
+        type = "continuous",
+        data.month = month_data
+    )
     
 # pca --------------------------------------------------
 
@@ -371,7 +377,7 @@ pain_pca <- read_data(dir_raw, "pca", FALSE) %>%
     group_by(millennium.id, event.datetime) %>%
     filter(
         !is.na(pca.dose),
-        floor_date(event.datetime, "month") == data_month
+        floor_date(event.datetime, "month") == month_data
     ) %>%
     mutate(
         total.dose = sum(
@@ -404,7 +410,10 @@ data_mme_pca <- pain_pca %>%
     filter(!is.na(mme.iv)) %>%
     group_by(millennium.id) %>%
     summarize_at("mme.iv", sum, na.rm = TRUE) %>%
-    mutate(type = "pca")
+    mutate(
+        type = "pca",
+        data.month = month_data
+    )
 
 # discharge rx -----------------------------------------
 
@@ -457,12 +466,17 @@ data_rx_ed <- rx %>%
     calc_morph_eq() %>%
     mutate(
         mme.iv.day = mme.iv * dose.day,
-        mme.iv.dispense = mme.iv * num.tab
+        mme.iv.dispense = mme.iv * num.tab,
+        data.month = month_data
     )
 
 # save data --------------------------------------------
 
-dirr::save_rds(paste0("data/tidy/", month_abbrv), pattern = "data_")
+dir_save <- paste0("data/tidy/", month_abbrv)
+
+if (!dir.exists(dir_save)) dir.create(dir_save)
+
+dirr::save_rds(dir_save, pattern = "data_")
 
 # data_mme <- data_mme_int %>%
 #     bind_rows(data_mme_cont, data_mme_pca) %>%
@@ -471,7 +485,7 @@ dirr::save_rds(paste0("data/tidy/", month_abbrv), pattern = "data_")
 #     group_by(millennium.id) %>%
 #     mutate(
 #         total = sum(intermittent, continuous, pca, na.rm = TRUE),
-#         data.month = data_month
+#         data.month = month_data
 #     ) %>%
 #     left_join(los_month, by = "millennium.id") 
 
