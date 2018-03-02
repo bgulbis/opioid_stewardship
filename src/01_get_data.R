@@ -229,7 +229,8 @@ meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
             route %in% routes_po ~ "PO",
             route %in% routes_iv ~ "IV",
             route %in% routes_top ~ "TOP",
-            route == "NASAL" ~ "NASAL"),
+            route == "NASAL" ~ "NASAL"
+        ),
         orig.order.id = order.parent.id    
     ) %>%
     mutate_at("orig.order.id", na_if, y = 0) %>%
@@ -404,6 +405,62 @@ data_mme_pca <- pain_pca %>%
     group_by(millennium.id) %>%
     summarize_at("mme.iv", sum, na.rm = TRUE) %>%
     mutate(type = "pca")
+
+# discharge rx -----------------------------------------
+
+rx <- read_data(dir_raw, "discharge", FALSE) %>%
+    as.meds_home(
+        extras = list(
+            "order.id" = "Order Id",
+            "med.product" = "Mnemonic (Ordered As Name)",
+            "frequency" = "Frequency",
+            "prn" = "PRN Indicator",
+            "med.dose" = "Order Volume Dose",
+            "med.dose.units" = "Order Volume Dose Unit",
+            "order.provider" = "Ordering Provider LIMITS",
+            "order.provider.posn" = "Ordering Provider Position LIMITS",
+            "clin.display" = "Complete Clinical Display Line"
+        )
+    ) %>%
+    filter(med %in% opiods_lower$med.name) %>%
+    mutate(
+        route = str_extract(clin.display, "PO"),
+        route.group = case_when(
+            route %in% routes_po ~ "PO",
+            route %in% routes_iv ~ "IV",
+            route %in% routes_top ~ "TOP",
+            route == "NASAL" ~ "NASAL"
+        ),
+        num.tab = str_extract(clin.display, "# [0-9]*"),
+        num.day = str_extract(clin.display, "X [0-9]*"),
+        num.refill = str_extract(clin.display, "[0-9] Refill\\(s\\)"),
+        dose.day = case_when(
+            frequency == "Daily" ~ 1,
+            frequency %in% c("Q6H", "QID") ~ 4,
+            frequency %in% c("Q8H", "TID") ~ 3,
+            frequency %in% c("Q12H", "BID") ~ 2,
+            frequency %in% c("Q4H", "Q4-6H") ~ 6
+        )
+    ) %>%
+    mutate_at(
+        c("num.tab", "num.day", "num.refill"), 
+        str_replace_all, 
+        pattern = "(#|X) | Refill\\(s\\)", 
+        replacement = ""
+    ) %>%
+    mutate_at(
+        c("med.dose", "num.tab", "num.day", "num.refill"), 
+        as.numeric
+    ) 
+
+data_rx_ed <- rx %>%
+    calc_morph_eq() %>%
+    mutate(
+        mme.iv.day = mme.iv * dose.day,
+        mme.iv.dispense = mme.iv * num.tab
+    )
+
+# save data --------------------------------------------
 
 dirr::save_rds(paste0("data/tidy/", month_abbrv), pattern = "data_")
 
