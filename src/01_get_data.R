@@ -42,7 +42,8 @@ mbo_opiods <- concat_encounters(opiods_list)
 
 pts <- read_data(dir_raw, "patients", FALSE) %>%
     as.patients() %>%
-    filter(discharge.datetime >= mdy("1/1/2017", tz = tz))
+    filter(discharge.datetime >= month_data,
+           discharge.datetime < depart_max)
 
 mbo_id <- concat_encounters(pts$millennium.id)
 
@@ -61,15 +62,16 @@ ids <- read_data(dir_raw, "identifiers") %>%
         millennium.id = `Millennium Encounter ID`,
         pie.id = `PowerInsight Encounter Id`
     ) %>%
-    distinct()
-    # as.id()
+    distinct() %>%
+    semi_join(pts, by = "millennium.id")
 
 edw_id <- concat_encounters(ids$pie.id)
 
 # ed visits --------------------------------------------
 
 demog <- read_data(dir_raw, "demographics", FALSE) %>%
-    as.demographics(extras = list("service.dc" = "Medical Service (Curr)"))
+    as.demographics(extras = list("service.dc" = "Medical Service (Curr)")) %>%
+    semi_join(pts, by = "millennium.id")
 
 ed_id <- demog %>%
     filter(visit.type == "Emergency") %>%
@@ -84,9 +86,10 @@ mbo_ed <- concat_encounters(ed_id$millennium.id)
 # los -------------------------------------------------
 
 visits <- read_data(dir_raw, "visits", FALSE) %>%
-    as.visits()
+    as.visits() %>%
+    semi_join(pts, by = "millennium.id")
 
-los_month <- demog %>%
+data_los_month <- demog %>%
     # select(millennium.id:length.stay) %>%
     left_join(
         visits, 
@@ -95,16 +98,17 @@ los_month <- demog %>%
     group_by(millennium.id) %>%
     mutate(
         arrive = if_else(
-            arrival.datetime < month_data,
+            min(arrival.datetime, admit.datetime) < month_data,
             month_data,
-            arrival.datetime
+            min(arrival.datetime, admit.datetime)
         ),
         depart = if_else(
             floor_date(discharge.datetime, "month") > month_data,
             depart_max,
             discharge.datetime
         ),
-        los.month = difftime(depart, arrive, units = "days")
+        los.month = difftime(depart, arrive, units = "days"),
+        data.month = month_data
     ) %>%
     mutate_at("los.month", as.numeric) 
 
@@ -223,6 +227,7 @@ pedi_units <- c(
 
 meds_opiods <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
+    semi_join(pts, by = "millennium.id") %>%
     filter(floor_date(med.datetime, "month") == month_data) %>%
     mutate(
         route.group = case_when(
@@ -266,7 +271,8 @@ orders_opiods <- read_data(dir_raw, "orders", FALSE) %>%
         prn = `PRN Indicator`
     ) %>%
     select(-route) %>%
-    distinct() 
+    distinct() %>%
+    semi_join(pts, by = "millennium.id")
 
 meds_intermit <- meds_opiods %>%
     filter(
@@ -359,6 +365,7 @@ pca_actions <- c(
 # filter for current month
 pain_pca <- read_data(dir_raw, "pca", FALSE) %>%
     as.pain_scores() %>%
+    semi_join(pts, by = "millennium.id") %>%
     select(millennium.id:event.result) %>%
     mutate_at("event", str_replace_all, pattern = pca_actions) %>%
     distinct(millennium.id, event.datetime, event, .keep_all = TRUE) %>%
@@ -431,6 +438,7 @@ rx <- read_data(dir_raw, "discharge", FALSE) %>%
             "clin.display" = "Complete Clinical Display Line"
         )
     ) %>%
+    semi_join(pts, by = "millennium.id") %>%
     filter(med %in% opiods_lower$med.name) %>%
     mutate(
         route = str_extract(clin.display, "PO"),
