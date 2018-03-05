@@ -61,15 +61,37 @@ data_mme <- data_mme_int_patient %>%
     ) %>%
     mutate(total.day = mme.iv / los.month)
     
-
+data_mme_iv <- data_mme_int_patient %>%
+    filter(mme.iv > 0,
+           route.group == "IV") %>%
+    group_by(millennium.id, data.month) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    left_join(
+        data_los_month[c(
+            "millennium.id", 
+            "data.month", 
+            "los.month",
+            "service.dc"
+        )], 
+        by = c("millennium.id", "data.month")
+    ) %>%
+    mutate_at(
+        "los.month",
+        funs(coalesce(., 1))
+    ) %>%
+    mutate_at(
+        "los.month",
+        funs(if_else(. < 1, ceiling(.), .))
+    ) %>%
+    mutate(total.day = mme.iv / los.month)
+    
 ```
 
-## Service Line on Discharge
+### Opiods by Service Line on Discharge
 
-```{r, fig.height=8, fig.cap="Total MME per day by service line on discharge"}
+```{r, fig.height=8, fig.cap="Total MME per patient per day by service line on discharge. Outliers above 100 MME per day are not displayed. The height of the box represents the number of patients on each service line."}
 
 medians_mme <- data_mme %>%
-    group_by(millennium.id) %>%
     group_by(service.dc) %>%
     summarize_at("total.day", median, na.rm = TRUE) %>%
     arrange(desc(total.day)) %>%
@@ -81,20 +103,87 @@ d <- data_mme %>%
     mutate_at("service.dc", fct_rev) %>%
     ggplot(aes(x = service.dc, y = total.day)) +
     geom_boxplot(varwidth = TRUE) +
+    xlab(NULL) +
     theme_bg()
     
 d +
-    coord_flip()
-```
-
-```{r, fig.height=8, fig.cap="Total MME per day by service line on discharge. Range is zoomed to better show details."}
-d + 
     coord_flip(ylim = c(0, 100))
 ```
 
-## Attending
+### IV Opiods by Service Line on Discharge
 
-```{r}
+```{r, fig.height=8, fig.cap="Total MME per patient per day of IV opiods by service line on discharge. Outliers above 50 MME per day are not displayed. The height of the box represents the number of patients on each service line."}
 
+medians_mme_iv <- data_mme_iv %>%
+    group_by(service.dc) %>%
+    summarize_at("total.day", median, na.rm = TRUE) %>%
+    arrange(desc(total.day)) %>%
+    mutate_at("service.dc", as_factor)
+
+data_mme_iv %>%
+    group_by(millennium.id) %>%
+    mutate_at("service.dc", factor, levels = levels(medians_mme_iv$service.dc)) %>%
+    mutate_at("service.dc", fct_rev) %>%
+    ggplot(aes(x = service.dc, y = total.day)) +
+    geom_boxplot(varwidth = TRUE) +
+    xlab(NULL) +
+    coord_flip(ylim = c(0, 50)) +
+    theme_bg()
 ```
 
+### Opiods by Attending
+
+```{r, fig.height=8, fig.cap="Total MME per patient per day by attending. The top 50 attendings by median MME per day are displayed. Outliers above 100 MME per day are not displayed."}
+df_md <- data_mme_int_md %>%
+    group_by(millennium.id, attending, los.md) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    mutate(total.day = mme.iv / los.md) 
+
+median_md <- df_md %>%
+    group_by(attending) %>%
+    summarize_at("total.day", median, na.rm = TRUE) %>%
+    arrange(desc(total.day)) %>%
+    mutate_at("attending", as_factor)
+
+d_md <- df_md %>%
+    ungroup() %>%
+    mutate_at("attending", factor, levels = levels(median_md$attending)) %>%
+    mutate_at("attending", fct_lump, n = 50) %>%
+    mutate_at("attending", fct_rev) %>%
+    ggplot(aes(x = attending, y = total.day)) +
+    geom_boxplot() +
+    xlab(NULL) +
+    theme_bg()
+
+d_md +
+    coord_flip(ylim = c(0, 100))
+```
+
+### IV Opiods by Attending
+
+```{r, fig.height=8, fig.cap="Total MME per patient per day of IV opiods by attending. The top 50 attendings by median MME per day are displayed. Outliers above 100 MME per day are not displayed."}
+df_md_iv <- data_mme_int_md %>%
+    filter(route.group == "IV") %>%
+    group_by(millennium.id, attending, los.md) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    mutate(total.day = mme.iv / los.md) 
+
+median_md_iv <- df_md_iv %>%
+    group_by(attending) %>%
+    summarize_at("total.day", median, na.rm = TRUE) %>%
+    arrange(desc(total.day)) %>%
+    mutate_at("attending", as_factor)
+
+d_md_iv <- df_md_iv %>%
+    ungroup() %>%
+    mutate_at("attending", factor, levels = levels(median_md_iv$attending)) %>%
+    mutate_at("attending", fct_lump, n = 50) %>%
+    mutate_at("attending", fct_rev) %>%
+    ggplot(aes(x = attending, y = total.day)) +
+    geom_boxplot() +
+    xlab(NULL) +
+    theme_bg()
+
+d_md_iv +
+    coord_flip(ylim = c(0, 100))
+```
