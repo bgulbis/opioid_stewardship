@@ -15,28 +15,71 @@ library(tidyverse)
 library(lubridate)
 library(themebg)
 
-data_mme <- list.files("../data/tidy/", full.names = TRUE) %>%
-    map_df(read_rds)
+file_groups <- list.files("../data/tidy", recursive = TRUE) %>%
+    str_remove_all("\\.Rds") %>%
+    str_remove_all(".*/") %>%
+    unique()
+
+files <- file_groups %>%
+    map(
+        .f = ~list.files(
+            path = "../data/tidy", 
+            pattern = .x, 
+            recursive = TRUE, 
+            full.names = TRUE
+        )
+    ) %>%
+    map(~map_dfr(.x, read_rds))
+
+names(files) <- file_groups
+
+x <- list2env(files, .GlobalEnv)
+
+rm(files, file_groups)
+
+data_mme <- data_mme_int_patient %>%
+    bind_rows(data_mme_cont, data_mme_pca) %>%
+    filter(mme.iv > 0) %>%
+    group_by(millennium.id, data.month) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    left_join(
+        data_los_month[c(
+            "millennium.id", 
+            "data.month", 
+            "los.month",
+            "service.dc"
+        )], 
+        by = c("millennium.id", "data.month")
+    ) %>%
+    mutate_at(
+        "los.month",
+        funs(coalesce(., 1))
+    ) %>%
+    mutate_at(
+        "los.month",
+        funs(if_else(. < 1, ceiling(.), .))
+    ) %>%
+    mutate(total.day = mme.iv / los.month)
+    
 
 ```
 
-```{r}
+## Service Line on Discharge
+
+```{r, fig.height=8, fig.cap="Total MME per day by service line on discharge"}
 
 medians_mme <- data_mme %>%
     group_by(millennium.id) %>%
-    mutate_at("total", funs(if_else(!is.na(los.month), . / los.month, .))) %>%
     group_by(service.dc) %>%
-    summarize_at("total", median, na.rm = TRUE) %>%
-    arrange(desc(total)) %>%
+    summarize_at("total.day", median, na.rm = TRUE) %>%
+    arrange(desc(total.day)) %>%
     mutate_at("service.dc", as_factor)
 
 d <- data_mme %>%
     group_by(millennium.id) %>%
-    mutate_at("total", funs(if_else(!is.na(los.month), . / los.month, .))) %>%
-    filter(total > 0) %>%
     mutate_at("service.dc", factor, levels = levels(medians_mme$service.dc)) %>%
     mutate_at("service.dc", fct_rev) %>%
-    ggplot(aes(x = service.dc, y = total)) +
+    ggplot(aes(x = service.dc, y = total.day)) +
     geom_boxplot(varwidth = TRUE) +
     theme_bg()
     
@@ -44,8 +87,14 @@ d +
     coord_flip()
 ```
 
-```{r}
+```{r, fig.height=8, fig.cap="Total MME per day by service line on discharge. Range is zoomed to better show details."}
 d + 
     coord_flip(ylim = c(0, 100))
+```
+
+## Attending
+
+```{r}
+
 ```
 
