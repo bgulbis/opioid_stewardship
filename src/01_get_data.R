@@ -291,7 +291,21 @@ meds_md <- meds_intermit %>%
     filter(
         is.na(attending) |
             (med.datetime >= md.start & med.datetime <= md.stop)
-    )
+    ) %>%
+    mutate(
+        begin = if_else(
+            md.start < month_data,
+            month_data,
+            md.start
+        ),
+        end = if_else(
+            floor_date(md.stop, "month") > month_data,
+            depart_max,
+            md.stop
+        ),
+        los.md = difftime(end, begin, units = "days")
+    ) %>%
+    mutate_at("los.md", as.numeric)
 
 mme_int <- function(x, type, ...) {
     group_by <- quos(...)
@@ -317,7 +331,8 @@ data_mme_int_md <- mme_int(
     "md",
     millennium.id, 
     route.group, 
-    attending
+    attending,
+    los.md
 )
 
 data_mme_int_location <- mme_int(
