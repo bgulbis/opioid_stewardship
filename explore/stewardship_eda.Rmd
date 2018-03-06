@@ -1,13 +1,13 @@
 ---
 title: "Opiod Stewardship"
+author: "Brian Gulbis, PharmD, BCPS"
 date: '`r format(Sys.Date(), "%B %d, %Y")`'
-output: 
-    html_document:
-        code_folding: hide
+output:
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 ```
 
 ```{r}
@@ -87,8 +87,6 @@ data_mme_iv <- data_mme_int_patient %>%
     
 ```
 
-### Opiods by Service Line on Discharge
-
 ```{r, fig.height=8, fig.cap="Total MME per patient per day by service line on discharge. Outliers above 100 MME per day are not displayed. The height of the box represents the number of patients on each service line."}
 
 medians_mme <- data_mme %>%
@@ -97,20 +95,18 @@ medians_mme <- data_mme %>%
     arrange(desc(total.day)) %>%
     mutate_at("service.dc", as_factor)
 
-d <- data_mme %>%
+data_mme %>%
     group_by(millennium.id) %>%
     mutate_at("service.dc", factor, levels = levels(medians_mme$service.dc)) %>%
     mutate_at("service.dc", fct_rev) %>%
     ggplot(aes(x = service.dc, y = total.day)) +
     geom_boxplot(varwidth = TRUE) +
     xlab(NULL) +
+    ylab("MME per patient per day") +
+    coord_flip(ylim = c(0, 100)) +
     theme_bg()
-    
-d +
-    coord_flip(ylim = c(0, 100))
-```
 
-### IV Opiods by Service Line on Discharge
+```
 
 ```{r, fig.height=8, fig.cap="Total MME per patient per day of IV opiods by service line on discharge. Outliers above 50 MME per day are not displayed. The height of the box represents the number of patients on each service line."}
 
@@ -127,11 +123,10 @@ data_mme_iv %>%
     ggplot(aes(x = service.dc, y = total.day)) +
     geom_boxplot(varwidth = TRUE) +
     xlab(NULL) +
+    ylab("MME per patient per day") +
     coord_flip(ylim = c(0, 50)) +
     theme_bg()
 ```
-
-### Opiods by Attending
 
 ```{r, fig.height=8, fig.cap="Total MME per patient per day by attending. The top 50 attendings by median MME per day are displayed. Outliers above 100 MME per day are not displayed."}
 df_md <- data_mme_int_md %>%
@@ -145,7 +140,7 @@ median_md <- df_md %>%
     arrange(desc(total.day)) %>%
     mutate_at("attending", as_factor)
 
-d_md <- df_md %>%
+df_md %>%
     ungroup() %>%
     mutate_at("attending", factor, levels = levels(median_md$attending)) %>%
     mutate_at("attending", fct_lump, n = 50) %>%
@@ -153,13 +148,11 @@ d_md <- df_md %>%
     ggplot(aes(x = attending, y = total.day)) +
     geom_boxplot() +
     xlab(NULL) +
+    ylab("MME per patient per day") +
+    coord_flip(ylim = c(0, 100)) +
     theme_bg()
 
-d_md +
-    coord_flip(ylim = c(0, 100))
 ```
-
-### IV Opiods by Attending
 
 ```{r, fig.height=8, fig.cap="Total MME per patient per day of IV opiods by attending. The top 50 attendings by median MME per day are displayed. Outliers above 100 MME per day are not displayed."}
 df_md_iv <- data_mme_int_md %>%
@@ -174,7 +167,7 @@ median_md_iv <- df_md_iv %>%
     arrange(desc(total.day)) %>%
     mutate_at("attending", as_factor)
 
-d_md_iv <- df_md_iv %>%
+df_md_iv %>%
     ungroup() %>%
     mutate_at("attending", factor, levels = levels(median_md_iv$attending)) %>%
     mutate_at("attending", fct_lump, n = 50) %>%
@@ -182,8 +175,28 @@ d_md_iv <- df_md_iv %>%
     ggplot(aes(x = attending, y = total.day)) +
     geom_boxplot() +
     xlab(NULL) +
+    ylab("MME per patient per day") +
+    coord_flip(ylim = c(0, 100)) +
     theme_bg()
 
-d_md_iv +
-    coord_flip(ylim = c(0, 100))
 ```
+
+```{r, fig.height=8, fig.cap="MME per patient dispensed by ED provider. Darker bars indicate more prescriptions were written by the provider."}
+data_rx_ed %>%
+    add_count(order.provider) %>%
+    group_by(order.provider, n) %>%
+    summarize_at("mme.iv.dispense", sum) %>%
+    mutate(mme.pt = mme.iv.dispense / n) %>%
+    arrange(desc(mme.pt)) %>%
+    ungroup() %>%
+    mutate_at("order.provider", as_factor) %>%
+    mutate_at("order.provider", fct_rev) %>%
+    ggplot(aes(x = order.provider, y = mme.pt)) +
+    geom_bar(aes(fill = n), stat = "identity") +
+    xlab(NULL) +
+    ylab("MME per patient") +
+    scale_fill_gradient("Patients (n)", low = "#bdbdbd", high = "#252525") +
+    coord_flip() +
+    theme_bg()
+```
+
