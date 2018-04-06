@@ -53,6 +53,7 @@ mbo_id <- concat_encounters(pts$millennium.id)
 #   * 04_demographics_opiods
 #   * 08_visits_opiods
 #   * 09_attendings_opiods
+#   * Diagnosis - ICD-9/10-CM
 
 # run EDW query
 #   * 05_identifiers_opiods
@@ -134,6 +135,15 @@ services <- read_data(dir_raw, "services") %>%
 
 # missing_service <- anti_join(ids, services, by = "pie.id") %>%
 #     left_join(demog, by = "millennium.id") 
+
+# diagnosis codes --------------------------------------
+
+diagnosis <- read_data(dir_raw, "diagnosis", FALSE) %>%
+    as.diagnosis() %>%
+    filter(
+        diag.type != "ADMIT",
+        diag.type != "WORKING"
+    )
 
 # pain meds --------------------------------------------
 
@@ -306,6 +316,19 @@ meds_md <- meds_intermit %>%
         los.md = difftime(end, begin, units = "days")
     ) %>%
     mutate_at("los.md", as.numeric)
+
+data_intmed <- meds_intermit %>%
+    left_join(
+        demog[c("millennium.id", "service.dc")], 
+        by = "millennium.id"
+    ) %>%
+    filter(service.dc == "Internal Medicine")
+
+data_iv_floor <- meds_intermit %>%
+    filter(
+        route %in% routes_iv,
+        med.location %in% c(imu_units, floor_units)
+    )
 
 mme_int <- function(x, type, ...) {
     group_by <- quos(...)
