@@ -6,6 +6,7 @@ library(edwr)
 
 dir_raw <- "data/raw/vizient"
 tz <- "US/Central"
+cullen <- c("HH 3CP", "HH 4WCP")
 
 dirr::gzip_files(dir_raw)
 
@@ -36,22 +37,49 @@ opiods <- med_lookup(
 ) %>%
     mutate_at("med.name", str_to_lower)
 
-meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
-    as.meds_inpt()
+# keep tramadol?
 
-meds_opiods <- meds %>%
-    semi_join(opiods, by = c("med" = "med.name")) %>%
-    filter(med.location %in% c("HH 3CP", "HH 4WCP")) %>%
+meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
+    as.meds_inpt() %>%
     mutate(orig.order.id = order.parent.id) %>%
     mutate_at("orig.order.id", na_if, y = 0L) %>%
     mutate_at("orig.order.id", funs(coalesce(., order.id)))
 
+data_meds_opiods <- meds %>%
+    semi_join(opiods, by = c("med" = "med.name")) %>%
+    filter(med.location %in% cullen) 
+
 mbo_order_id <- concat_encounters(meds_opiods$orig.order.id)
+
+data_meds_modal <- meds %>%
+    filter(
+        med.location %in% cullen,
+        med %in% c(
+            "acetaminophen",
+            "gabapentin",
+            "pregabalin",
+            "tramadol"
+        )
+    )
+
+data_meds_po <- meds %>%
+    anti_join(
+        data_meds_opiods, 
+        by = c("millennium.id", "orig.order.id")
+    ) %>%
+    filter(
+        is.na(event.tag),
+        med.location %in% cullen,
+        str_detect(
+            route, 
+            "PO|PEG|GT|NG|T FEED|CHEW|NJ|DHT|OGT|JT"
+        )
+    )
 
 # run MBO query
 #   * Orders Meds - Details - by Order Id
 
-orders <- read_data(dir_raw, "orders", FALSE) %>%
+data_orders <- read_data(dir_raw, "orders", FALSE) %>%
     as.order_detail() %>%
     distinct(
         millennium.id,
@@ -67,15 +95,21 @@ meds_orders <- meds_opiods %>%
     left_join(
         orders, 
         by = c("millennium.id", "orig.order.id" = "order.id")
-    )
-
+    ) %>%
+    filter(med != "tramadol")
 
 duration_cullen <- read_data(dir_raw, "locations", FALSE) %>%
     as.locations() %>%
     filter(
-        unit.name %in% c("HH 3CP", "HH 4WCP"),
+        unit.name %in% cullen,
         arrive.datetime < mdy("3/1/2018", tz = tz),
         depart.datetime >= mdy("12/1/2017", tz = tz)
     )
+
+x <- duration_cullen %>%
+    semi_join(meds_orders, by = "millennium.id") %>%
+    distinct(millennium.id)
+
+y <- distinct(duration_cullen, millennium.id)
 
 mbo_id <- concat_encounters(duration_cullen$millennium.id)
