@@ -29,6 +29,18 @@ mbo_id <- concat_encounters(pts_cullen$millennium.id, 650)
 #   * Medications - Inpatient - All
 #   * Pain PCA Pump
 
+# location ---------------------------------------------
+
+data_cullen <- read_data(dir_raw, "locations", FALSE) %>%
+    as.locations() %>%
+    filter(
+        unit.name %in% cullen,
+        arrive.datetime < mdy("3/1/2018", tz = tz),
+        depart.datetime >= mdy("12/1/2017", tz = tz)
+    )
+
+# meds -------------------------------------------------
+
 opiods <- med_lookup(
     c(
         "narcotic analgesics", 
@@ -39,21 +51,21 @@ opiods <- med_lookup(
 
 # keep tramadol?
 
-meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
+raw_meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
+    semi_join(data_cullen, by = "millennium.id") %>%
     mutate(orig.order.id = order.parent.id) %>%
     mutate_at("orig.order.id", na_if, y = 0L) %>%
-    mutate_at("orig.order.id", funs(coalesce(., order.id)))
-
-data_meds_opiods <- meds %>%
-    semi_join(opiods, by = c("med" = "med.name")) %>%
+    mutate_at("orig.order.id", funs(coalesce(., order.id))) %>%
     filter(med.location %in% cullen) 
 
-mbo_order_id <- concat_encounters(meds_opiods$orig.order.id)
+data_meds_opiods <- raw_meds %>%
+    semi_join(opiods, by = c("med" = "med.name"))
 
-data_meds_modal <- meds %>%
+mbo_order_id <- concat_encounters(data_meds_opiods$orig.order.id)
+
+data_meds_modal <- raw_meds %>%
     filter(
-        med.location %in% cullen,
         med %in% c(
             "acetaminophen",
             "gabapentin",
@@ -62,14 +74,13 @@ data_meds_modal <- meds %>%
         )
     )
 
-data_meds_po <- meds %>%
+data_meds_po <- raw_meds %>%
     anti_join(
         data_meds_opiods, 
         by = c("millennium.id", "orig.order.id")
     ) %>%
     filter(
         is.na(event.tag),
-        med.location %in% cullen,
         str_detect(
             route, 
             "PO|PEG|GT|NG|T FEED|CHEW|NJ|DHT|OGT|JT"
@@ -91,25 +102,97 @@ data_orders <- read_data(dir_raw, "orders", FALSE) %>%
     ) %>%
     rename(route.order = route)
 
-meds_orders <- meds_opiods %>%
-    left_join(
-        orders, 
-        by = c("millennium.id", "orig.order.id" = "order.id")
-    ) %>%
-    filter(med != "tramadol")
+# meds_orders <- data_meds_opiods %>%
+#     left_join(
+#         data_orders, 
+#         by = c("millennium.id", "orig.order.id" = "order.id")
+#     ) %>%
+#     filter(med != "tramadol")
 
-duration_cullen <- read_data(dir_raw, "locations", FALSE) %>%
-    as.locations() %>%
-    filter(
-        unit.name %in% cullen,
-        arrive.datetime < mdy("3/1/2018", tz = tz),
-        depart.datetime >= mdy("12/1/2017", tz = tz)
+# pca --------------------------------------------------
+
+pca_actions <- c(
+    "pca continuous rate dose" = "pca.rate",
+    "pca clinician bolus" = "pca.bolus",
+    "pca clinician bolus unit" = "pca.bolus.unit",
+    "pca demand dose unit" = "pca.dose.unit",
+    "pca demand dose" = "pca.dose",
+    "pca doses delivered" = "pca.delivered",
+    "pca drug" = "pca.drug",
+    "pca loading dose" = "pca.load",
+    "pca lockout interval \\(minutes\\)" = "pca.lockout",
+    "pca total demands" = "pca.demands"
+)
+
+data_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
+    as.pain_scores() %>%
+    semi_join(data_cullen, by = "millennium.id") %>%
+    filter(event.location %in% cullen) %>%
+    select(millennium.id:event.result) %>%
+    mutate_at("event", str_replace_all, pattern = pca_actions) %>%
+    distinct() %>%
+    spread(event, event.result) %>%
+    mutate_at(
+        c(
+            "pca.demands",
+            "pca.dose",
+            "pca.delivered",
+            "pca.load",
+            "pca.lockout",
+            "pca.rate"
+            # "pca.bolus"
+        ),
+        as.numeric
+    ) %>%
+    group_by(millennium.id) %>%
+    mutate(
+        duration = difftime(
+            lead(event.datetime),
+            event.datetime,
+            units = "hours"
+        ), 
+        total.rate = pca.rate * duration
+    ) %>%
+    group_by(millennium.id, event.datetime) %>%
+    mutate(
+        total.dose = sum(
+            pca.delivered * pca.dose,
+            pca.load,
+            # pca.bolus,
+            total.rate,
+            na.rm = TRUE
+        )
     )
 
-x <- duration_cullen %>%
-    semi_join(meds_orders, by = "millennium.id") %>%
-    distinct(millennium.id)
+# data_pca <- pain_pca %>%
+#     group_by(millennium.id, pca.drug) %>%
+#     summarize_at(
+#         c(
+#             "pca.demands",
+#             "pca.delivered",
+#             "total.dose",
+#             "duration"
+#         ),
+#         sum,
+#         na.rm = TRUE
+#     )
 
-y <- distinct(duration_cullen, millennium.id)
+# diagnosis --------------------------------------------
 
-mbo_id <- concat_encounters(duration_cullen$millennium.id)
+data_icd <- read_data(dir_raw, "diagnosis", FALSE) %>%
+    as.diagnosis() %>%
+    semi_join(data_cullen, by = "millennium.id")
+
+data_drg <- read_data(dir_raw, "drg", FALSE) %>%
+    as.drg()%>%
+    semi_join(data_cullen, by = "millennium.id")
+
+# demographics -----------------------------------------
+
+data_demog <- read_data(dir_raw, "demographics", FALSE) %>%
+    as.demographics() %>%
+    semi_join(data_cullen, by = "millennium.id")
+
+# data sets --------------------------------------------
+
+dirr::save_rds("data/tidy/vizient", pattern = "data_")
