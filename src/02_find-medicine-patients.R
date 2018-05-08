@@ -22,6 +22,7 @@ pts_cullen <- read_data(dir_raw, "patients", FALSE) %>%
 mbo_id <- concat_encounters(pts_cullen$millennium.id, 650)
 
 # run MBO query
+#   * Encounters
 #   * Demographics
 #   * Diagnosis - DRG
 #   * Diagnosis - ICD-9/10-CM
@@ -38,6 +39,11 @@ data_cullen <- read_data(dir_raw, "locations", FALSE) %>%
         arrive.datetime < mdy("3/1/2018", tz = tz),
         depart.datetime >= mdy("12/1/2017", tz = tz)
     )
+
+data_encounters <- read_data(dir_raw, "encounters", FALSE) %>%
+    as.encounters() %>%
+    semi_join(data_cullen, by = "millennium.id") %>%
+    select(millennium.id, admit.datetime)
 
 # meds -------------------------------------------------
 
@@ -60,7 +66,7 @@ raw_meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     filter(med.location %in% cullen) 
 
 data_meds_opiods <- raw_meds %>%
-    semi_join(opiods, by = c("med" = "med.name"))
+    semi_join(opiods, by = c("med" = "med.name")) 
 
 mbo_order_id <- concat_encounters(data_meds_opiods$orig.order.id)
 
@@ -88,26 +94,31 @@ data_meds_po <- raw_meds %>%
     )
 
 # run MBO query
-#   * Orders Meds - Details - by Order Id
+#   * Opiod Stewardship/07_orders-details_opiods
 
 data_orders <- read_data(dir_raw, "orders", FALSE) %>%
-    as.order_detail() %>%
+    # as.order_detail() %>%
+    rename(
+        millennium.id = `Encounter Identifier`,
+        order.id = `Order Id`,
+        med.product = `Mnemonic (Product)`,
+        route.order = `Order Route`,
+        frequency = Frequency,
+        prn = `PRN Indicator`
+    ) %>%
     distinct(
         millennium.id,
         order.id,
-        order.datetime,
-        order,
+        med.product,
         prn,
         .keep_all = TRUE
-    ) %>%
-    rename(route.order = route)
+    ) 
 
 # meds_orders <- data_meds_opiods %>%
 #     left_join(
-#         data_orders, 
+#         data_orders,
 #         by = c("millennium.id", "orig.order.id" = "order.id")
-#     ) %>%
-#     filter(med != "tramadol")
+#     ) 
 
 # pca --------------------------------------------------
 
