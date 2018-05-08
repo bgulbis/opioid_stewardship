@@ -1,0 +1,54 @@
+---
+title: "Medicine Service Line"
+subtitle: "Exploratory Analysis"
+author: "Brian Gulbis, PharmD, BCPS"
+date: "May 8, 2018"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+    html_document:
+        code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(edwr)
+library(themebg)
+
+x <- dirr::get_rds("../data/tidy/vizient")
+
+```
+
+```{r}
+pts <- data_meds_opiods %>%
+    filter(is.na(event.tag)) %>%
+    left_join(
+        data_orders, 
+        by = c("millennium.id", "orig.order.id" = "order.id")
+    ) %>%
+    add_count(millennium.id, prn) %>%
+    mutate(
+        not.ultram = med != "tramadol",
+        iv.opiods = str_detect(route, "IV")
+    ) %>%
+    group_by(millennium.id, n, prn) %>%
+    summarize_at(
+        c("not.ultram", "iv.opiods"),
+        sum,
+        na.rm = TRUE
+    ) %>%
+    rename(all.doses = n) 
+
+pts_summary <- pts %>%
+    group_by(millennium.id) %>%
+    gather(key, val, all.doses, not.ultram, iv.opiods) %>%
+    unite("key.prn", key, prn, sep = ".") %>%
+    spread(key.prn, val) %>%
+    mutate_if(is.integer, na_if, y = 0L)
+    
+
+```
+
