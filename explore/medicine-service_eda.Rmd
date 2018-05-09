@@ -13,16 +13,17 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r, message=FALSE}
 library(tidyverse)
 library(edwr)
 library(themebg)
+library(vistime)
 
 x <- dirr::get_rds("../data/tidy/vizient")
 
 ```
 
-```{r}
+```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line."}
 pts <- data_meds_opiods %>%
     filter(is.na(event.tag)) %>%
     left_join(
@@ -45,10 +46,134 @@ pts <- data_meds_opiods %>%
 pts_summary <- pts %>%
     group_by(millennium.id) %>%
     gather(key, val, all.doses, not.ultram, iv.opiods) %>%
-    unite("key.prn", key, prn, sep = ".") %>%
+    unite("key.prn", key, prn, sep = "_") %>%
     spread(key.prn, val) %>%
     mutate_if(is.integer, na_if, y = 0L)
     
+pts_summary %>%
+    mutate_if(is.integer, funs(!is.na(.))) %>%
+    mutate(
+        all.doses_any = all.doses_PRN | all.doses_Scheduled,
+        iv.opiods_any = iv.opiods_PRN | iv.opiods_Scheduled,
+        not.ultram_any = not.ultram_PRN | not.ultram_Scheduled
+    ) %>%
+    ungroup() %>%
+    summarize_if(is.logical, sum) %>%
+    mutate_if(is.integer, funs(. / nrow(data_demog) * 100)) %>%
+    gather(key, value) %>%
+    separate(key, into = c("key", "prn"), sep = "_") %>%
+    ggplot(aes(x = key, y = value)) +
+    geom_bar(stat = "identity") +
+    xlab(NULL) +
+    ylab("Medicine Patients (%)") +
+    facet_wrap(~ prn) +
+    theme_bg()
 
+```
+
+```{r}
+x <- data_drg %>%
+    semi_join(data_meds_opiods, by = "millennium.id") %>%
+    count(drg, drg.desc, sort = TRUE)
+```
+
+```{r}
+tmp_meds <- data_meds_opiods %>%
+    filter(
+        !str_detect(med, "opium"),
+        med != "tramadol"
+    ) %>%
+    mutate(
+        type = if_else(
+            str_detect(route, "IV"),
+            "opiod_iv",
+            "opiod_po"
+        )
+    ) %>%
+    select(millennium.id, med.datetime, type)
+
+tmp_iv <- tmp_meds %>%
+    filter(type == "opiod_iv")
+
+tmp_pca <- data_pca %>%
+    select(millennium.id, med.datetime = event.datetime) %>%
+    mutate(type = "pca")
+
+incl <- tmp_iv %>%
+    bind_rows(tmp_pca) %>%
+    distinct(millennium.id)
+
+tmp_modal <- data_meds_modal %>%
+    semi_join(incl, by = "millennium.id") %>%
+    mutate(type = "modal") %>%
+    select(millennium.id, med.datetime, type)
+
+df <- tmp_meds %>%
+    bind_rows(tmp_pca, tmp_modal) %>%
+    left_join(data_encounters, by = "millennium.id") %>%
+    arrange(millennium.id, med.datetime) %>%
+    mutate(
+        time.admit = difftime(
+            med.datetime,
+            admit.datetime,
+            units = "hours"
+        )
+    ) %>%
+    mutate_at("time.admit", as.numeric) 
+
+df %>%
+    semi_join(tmp_pca, by = "millennium.id") %>%
+    filter(type != "modal") %>%
+    ggplot(
+        aes(
+            x = time.admit, 
+            y = as.numeric(millennium.id),
+            color = type
+        )
+    ) +
+    geom_point(alpha = 0.5) +
+    xlab("Time from admission (hours)") +
+    ylab("Patient") +
+    scale_color_brewer(palette = "Dark2") +
+    coord_cartesian(xlim = c(0, 150)) +
+    theme_bg()
+    
+```
+
+```{r}
+medians <- df %>%
+    group_by(type) %>%
+    summarize_at("time.admit", median) %>%
+    arrange(time.admit)
+
+df %>%
+    mutate_at("type", factor, levels = medians$type) %>%
+    mutate_at("type", fct_rev) %>%
+    ggplot(aes(x = type, y = time.admit)) +
+    geom_boxplot() +
+    xlab("Medication type") +
+    ylab("Time from admission (hours)") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r}
+set.seed(77123)
+samp <- df %>%
+    semi_join(tmp_pca, by = "millennium.id") %>%
+    distinct(millennium.id) %>%
+    sample_n(20)
+
+df %>%
+    semi_join(samp, by = "millennium.id") %>%
+    group_by(millennium.id, type) %>%
+    summarize_at("med.datetime", funs(first, last)) %>%
+    vistime(
+        start = "first",
+        end = "last",
+        events = "type",
+        groups = "millennium.id",
+        showLabels = FALSE
+    )
 ```
 
