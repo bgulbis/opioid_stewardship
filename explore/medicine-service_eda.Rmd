@@ -2,7 +2,6 @@
 title: "Medicine Service Line"
 subtitle: "Exploratory Analysis"
 author: "Brian Gulbis, PharmD, BCPS"
-date: "May 8, 2018"
 date: '`r format(Sys.Date(), "%B %d, %Y")`'
 output: 
     html_document:
@@ -15,11 +14,20 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r, message=FALSE}
 library(tidyverse)
+library(lubridate)
 library(edwr)
 library(themebg)
+library(plotly)
 library(vistime)
 
 x <- dirr::get_rds("../data/tidy/vizient")
+
+pts_iv <- data_meds_opiods %>%
+    filter(
+        is.na(event.tag),
+        str_detect(route, "IV")
+    ) %>%
+    distinct(millennium.id)
 
 ```
 
@@ -71,10 +79,68 @@ pts_summary %>%
 
 ```
 
+```{r, fig.cap="Among patients who received IV opiods, this is the percent who received other pain therapies. Here, PO is determined by administration of other PO medications within 4 hours before or after the IV opiod was given."}
+tmp_opiods <- data_meds_opiods %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    filter(str_detect(route, "IV")) %>%
+    distinct(millennium.id, med.datetime) %>%
+    rename(iv.datetime = med.datetime)
+
+tmp_po <- data_meds_po %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    left_join(tmp_opiods, by = "millennium.id") %>%
+    filter(
+        med.datetime >= iv.datetime - hours(4),
+        med.datetime <= iv.datetime + hours(4)
+    ) %>%
+    distinct(millennium.id) %>%
+    mutate(po = TRUE)
+
+tmp_pca <- data_pca %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(pca = TRUE)
+
+tmp_modal <- data_meds_modal %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(modal = TRUE) 
+
+pts_iv %>%
+    left_join(tmp_po, by = "millennium.id") %>%
+    left_join(tmp_pca, by = "millennium.id") %>%
+    left_join(tmp_modal, by = "millennium.id") %>%
+    ungroup() %>%
+    summarize_at(c("po", "pca", "modal"), sum, na.rm = TRUE) %>%
+    mutate_at(c("po", "pca", "modal"), funs(. / nrow(pts_iv) * 100)) %>%
+    gather(key, value) %>%
+    ggplot(aes(x = key, y = value)) +
+    geom_bar(stat = "identity") +
+    xlab("Pain therapy") +
+    ylab("Patients (%)") +
+    coord_cartesian(ylim = c(0, 100)) +
+    theme_bg()
+
+```
+
+
 ```{r}
-x <- data_drg %>%
-    semi_join(data_meds_opiods, by = "millennium.id") %>%
-    count(drg, drg.desc, sort = TRUE)
+data_drg %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    count(drg, drg.desc, sort = TRUE) %>%
+    mutate_at("n", funs(round(. / nrow(pts_iv) * 100, 1))) %>%
+    top_n(20, n) %>%
+    knitr::kable(
+        # booktabs = TRUE,
+        caption = "Top 20 DRGs among patients receiving IV opiods",
+        col.names = c(
+            "DRG",
+            "Description",
+            "Patients (%)"
+        )
+    )
 ```
 
 ```{r}
@@ -121,32 +187,56 @@ df <- tmp_meds %>%
     ) %>%
     mutate_at("time.admit", as.numeric) 
 
+# RColorBrewer::brewer.pal.info
+
+
 df %>%
-    semi_join(tmp_pca, by = "millennium.id") %>%
-    filter(type != "modal") %>%
-    ggplot(
-        aes(
-            x = time.admit, 
-            y = as.numeric(millennium.id),
-            color = type
+    semi_join(pts_iv, by = "millennium.id") %>%
+    mutate_at("millennium.id", as.numeric) %>%
+    mutate_at("type", as.factor) %>%
+    # filter(type != "modal") %>%
+    plot_ly() %>%
+    add_markers(
+        x = ~time.admit,
+        y = ~millennium.id,
+        symbol = ~type,
+        # colors = "Set1",
+        # marker = list(symbol = "circle-open")
+        marker = list(
+            # size = 5,
+            # opacity = 0.5
+            # line = list(
+            #     width = 2
+            # )
         )
-    ) +
-    geom_point(alpha = 0.5) +
-    xlab("Time from admission (hours)") +
-    ylab("Patient") +
-    scale_color_brewer(palette = "Dark2") +
-    coord_cartesian(xlim = c(0, 150)) +
-    theme_bg()
+    )
     
+    # ggplot(
+    #     aes(
+    #         x = time.admit,
+    #         y = as.numeric(millennium.id),
+    #         color = type
+    #     )
+    # ) +
+    # geom_point(alpha = 0.5) +
+    # xlab("Time from admission (hours)") +
+    # ylab("Patient") +
+    # scale_color_brewer(palette = "Dark2") +
+    # coord_cartesian(xlim = c(0, 150)) +
+    # theme_bg()
+    # 
+
 ```
 
-```{r}
+```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opiods"}
 medians <- df %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
     group_by(type) %>%
     summarize_at("time.admit", median) %>%
     arrange(time.admit)
 
 df %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
     mutate_at("type", factor, levels = medians$type) %>%
     mutate_at("type", fct_rev) %>%
     ggplot(aes(x = type, y = time.admit)) +
@@ -157,7 +247,7 @@ df %>%
     theme_bg()
 ```
 
-```{r}
+```{r, eval=FALSE}
 set.seed(77123)
 samp <- df %>%
     semi_join(tmp_pca, by = "millennium.id") %>%
