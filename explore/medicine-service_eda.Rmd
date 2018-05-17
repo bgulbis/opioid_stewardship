@@ -33,7 +33,7 @@ pts_iv <- data_meds_opiods %>%
 
 # All Medicine Service-Line Patients
 
-```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line.", fig.width=8}
+```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line. Any Opiod includes all opiods via any route as well as tramadol, whereas Non-Tramadol excludes all tramadol doses.", fig.width=8}
 pts <- data_meds_opiods %>%
     filter(is.na(event.tag)) %>%
     left_join(
@@ -336,36 +336,7 @@ df <- tmp_meds %>%
 
 ```
 
-```{r, fig.cap="Timeline of pain medication administration over first 30 days of admission", eval=FALSE}
-df %>%
-    plot_ly(
-        x = ~time.admit, 
-        color = ~type,
-        colors = brewer.pal(4, "Paired"),
-        alpha = 0.6
-    ) %>%
-    add_histogram(
-        # histnorm = "density",
-        autobinx = FALSE,
-        xbins = list(
-            start = 0,
-            end = 30,
-            size = 1
-        )
-    ) %>%
-    layout(
-        barmode = "overlay",
-        xaxis = list(
-            title = "Time from admission (days)",
-            tick0 = 0,
-            dtick = 3
-        ),
-        yaxis = list(title = "Patients")
-    )
-
-```
-
-```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission"}
+```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission. Click on the legend to filter by types of pain medications or drag the cursor over a section of the graph to zoom."}
 df %>%
     plot_ly(
         x = ~time.admit, 
@@ -415,11 +386,15 @@ df %>%
 
 ```{r, eval=FALSE}
 df %>%
-    semi_join(pts_iv, by = "millennium.id") %>%
-    ggplot(aes(x = time.admit, fill = type)) +
-    geom_histogram(binwidth = 24) +
-    # geom_dotplot(alpha = 0.5, binwidth = 24, dotsize = 0.5, method = "histodot") +
-    scale_fill_brewer(NULL, palette = "Paired") +
+    ggplot(aes(x = time.admit, color = type)) +
+    geom_freqpoly(binwidth = 0.5) +
+    scale_x_continuous(
+        "Time from admission (days)", 
+        breaks = seq(0, 10, 2)
+    ) +
+    ylab("Number of patients") +
+    scale_color_brewer(NULL, palette = "Paired") +
+    coord_cartesian(xlim = c(0, 10)) +
     theme_bg()
 ```
 
