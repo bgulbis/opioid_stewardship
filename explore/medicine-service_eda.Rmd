@@ -305,7 +305,7 @@ df <- tmp_meds %>%
         time.admit = difftime(
             med.datetime,
             admit.datetime,
-            units = "hours"
+            units = "days"
         )
     ) %>%
     mutate_at("time.admit", as.numeric) %>%
@@ -336,7 +336,7 @@ df <- tmp_meds %>%
 
 ```
 
-```{r, fig.cap="Timeline of pain medication administration"}
+```{r, fig.cap="Timeline of pain medication administration over first 30 days of admission", eval=FALSE}
 df %>%
     plot_ly(
         x = ~time.admit, 
@@ -349,18 +349,50 @@ df %>%
         autobinx = FALSE,
         xbins = list(
             start = 0,
-            end = 800,
-            size = 12
+            end = 30,
+            size = 1
         )
     ) %>%
     layout(
         barmode = "overlay",
-        xaxis = list(title = "Time from admission (hours)"),
+        xaxis = list(
+            title = "Time from admission (days)",
+            tick0 = 0,
+            dtick = 3
+        ),
         yaxis = list(title = "Patients")
     )
 
 ```
 
+```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission"}
+df %>%
+    plot_ly(
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6
+    ) %>%
+    add_histogram(
+        # histnorm = "density",
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 0.5
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Time from admission (days)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+```
 
 ```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opiods", eval=FALSE}
 medians <- df %>%
