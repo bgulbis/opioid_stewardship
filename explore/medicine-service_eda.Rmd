@@ -266,7 +266,7 @@ data_drg %>%
     )
 ```
 
-```{r, fig.cap="Timeline of pain medication administration per patient"}
+```{r}
 tmp_meds <- data_meds_opiods %>%
     filter(
         !str_detect(med, "opium"),
@@ -308,35 +308,61 @@ df <- tmp_meds %>%
             units = "hours"
         )
     ) %>%
-    mutate_at("time.admit", as.numeric) 
-
-df %>%
+    mutate_at("time.admit", as.numeric) %>%
     semi_join(pts_iv, by = "millennium.id") %>%
-    mutate_at("millennium.id", as.numeric) %>%
-    mutate_at("type", as.factor) %>%
-    plot_ly(
-        colors = brewer.pal(4, "Paired"),
-        symbols = c(
-            "circle-open", 
-            "triangle-up-open", 
-            "square-open",
-            "cross-thin-open")
-    ) %>%
-    add_markers(
-        x = ~time.admit,
-        y = ~millennium.id,
-        color = ~type,
-        symbol = ~type
-    ) %>%
-    layout(
-        xaxis = list(title = "Time from admission (hours)"),
-        yaxis = list(title = "Patient")
-    )
+    mutate_at("type", as.factor) 
+
+# df %>%
+#     mutate_at("millennium.id", as.numeric) %>%
+#     plot_ly(
+#         colors = brewer.pal(4, "Paired"),
+#         symbols = c(
+#             "circle-open", 
+#             "triangle-up-open", 
+#             "square-open",
+#             "cross-thin-open")
+#     ) %>%
+#     add_markers(
+#         x = ~time.admit,
+#         y = ~millennium.id,
+#         color = ~type,
+#         symbol = ~type
+#     ) %>%
+#     layout(
+#         xaxis = list(title = "Time from admission (hours)"),
+#         yaxis = list(title = "Patient")
+#     )
 
 
 ```
 
-```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opiods"}
+```{r, fig.cap="Timeline of pain medication administration"}
+df %>%
+    plot_ly(
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6
+    ) %>%
+    add_histogram(
+        # histnorm = "density",
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 800,
+            size = 12
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(title = "Time from admission (hours)"),
+        yaxis = list(title = "Patients")
+    )
+
+```
+
+
+```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opiods", eval=FALSE}
 medians <- df %>%
     semi_join(pts_iv, by = "millennium.id") %>%
     group_by(type) %>%
@@ -355,7 +381,7 @@ df %>%
     theme_bg()
 ```
 
-```{r}
+```{r, eval=FALSE}
 df %>%
     semi_join(pts_iv, by = "millennium.id") %>%
     ggplot(aes(x = time.admit, fill = type)) +
