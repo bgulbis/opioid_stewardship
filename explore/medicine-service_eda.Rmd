@@ -17,8 +17,8 @@ library(tidyverse)
 library(lubridate)
 library(edwr)
 library(themebg)
+library(RColorBrewer)
 library(plotly)
-library(vistime)
 
 x <- dirr::get_rds("../data/tidy/vizient")
 
@@ -33,7 +33,7 @@ pts_iv <- data_meds_opiods %>%
 
 # All Medicine Service-Line Patients
 
-```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line."}
+```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line.", fig.width=8}
 pts <- data_meds_opiods %>%
     filter(is.na(event.tag)) %>%
     left_join(
@@ -63,9 +63,9 @@ pts_summary <- pts %>%
 pts_summary %>%
     mutate_if(is.integer, funs(!is.na(.))) %>%
     mutate(
-        all.doses_any = all.doses_PRN | all.doses_Scheduled,
-        iv.opiods_any = iv.opiods_PRN | iv.opiods_Scheduled,
-        not.ultram_any = not.ultram_PRN | not.ultram_Scheduled
+        all.doses_Combined = all.doses_PRN | all.doses_Scheduled,
+        iv.opiods_Combined = iv.opiods_PRN | iv.opiods_Scheduled,
+        not.ultram_Combined = not.ultram_PRN | not.ultram_Scheduled
     ) %>%
     ungroup() %>%
     summarize_if(is.logical, sum) %>%
@@ -73,14 +73,24 @@ pts_summary %>%
     gather(key, value) %>%
     separate(key, into = c("key", "prn"), sep = "_") %>%
     arrange(desc(value)) %>%
+    mutate_at(
+        "key",
+        str_replace_all,
+        pattern = c(
+            "all.doses" = "Any Opiod",
+            "not.ultram" = "Non-Tramadol",
+            "iv.opiods" = "IV Opiod"
+        )
+    ) %>%
     mutate_at("key", as_factor) %>%
+    # mutate_at("key", fct_rev) %>%
     ggplot(aes(x = key, y = value)) +
     geom_bar(stat = "identity") +
     xlab(NULL) +
     ylab("Medicine Patients (%)") +
     facet_wrap(~ prn) +
     coord_cartesian(ylim = c(0, 100)) +
-    theme_bg()
+    theme_bg(xticks = FALSE)
 
 ```
 
@@ -179,9 +189,7 @@ data_demog %>%
 
 ```
 
-
-
-```{r, fig.cap="Among patients who received IV opiods, this is the percent who received other pain therapies. Here, PO is determined by administration of other PO medications within 4 hours before or after the IV opiod was given."}
+```{r, fig.cap="Among patients who received IV opiods, this is the percent who received other pain therapies. Here, PO is determined by administration of other PO medications within 4 hours before or after the IV opiod was given, multi-modal therapy administration within 8 hours of IV opiod use, and PCA use charted within 12 hours of IV opiod administration."}
 tmp_opiods <- data_meds_opiods %>%
     semi_join(pts_iv, by = "millennium.id") %>%
     filter(str_detect(route, "IV")) %>%
@@ -196,16 +204,26 @@ tmp_po <- data_meds_po %>%
         med.datetime <= iv.datetime + hours(4)
     ) %>%
     distinct(millennium.id) %>%
-    mutate(po = TRUE)
+    mutate(PO = TRUE)
 
 tmp_pca <- data_pca %>%
     semi_join(pts_iv, by = "millennium.id") %>%
+    left_join(tmp_opiods, by = "millennium.id") %>%
+    filter(
+        event.datetime >= iv.datetime - hours(12),
+        event.datetime <= iv.datetime + hours(12)
+    ) %>%
     ungroup() %>%
     distinct(millennium.id) %>%
-    mutate(pca = TRUE)
+    mutate(PCA = TRUE)
 
 tmp_modal <- data_meds_modal %>%
     semi_join(pts_iv, by = "millennium.id") %>%
+    left_join(tmp_opiods, by = "millennium.id") %>%
+    filter(
+        med.datetime >= iv.datetime - hours(8),
+        med.datetime <= iv.datetime + hours(8)
+    ) %>%
     ungroup() %>%
     distinct(millennium.id) %>%
     mutate(modal = TRUE) 
@@ -215,8 +233,9 @@ pts_iv %>%
     left_join(tmp_pca, by = "millennium.id") %>%
     left_join(tmp_modal, by = "millennium.id") %>%
     ungroup() %>%
-    summarize_at(c("po", "pca", "modal"), sum, na.rm = TRUE) %>%
-    mutate_at(c("po", "pca", "modal"), funs(. / nrow(pts_iv) * 100)) %>%
+    summarize_at(c("PO", "PCA", "modal"), sum, na.rm = TRUE) %>%
+    mutate_at(c("PO", "PCA", "modal"), funs(. / nrow(pts_iv) * 100)) %>%
+    rename(`Multi-modal` = modal) %>%
     gather(key, value) %>%
     arrange(desc(value)) %>%
     mutate_at("key", as_factor) %>%
@@ -247,7 +266,7 @@ data_drg %>%
     )
 ```
 
-```{r}
+```{r, fig.cap="Timeline of pain medication administration per patient"}
 tmp_meds <- data_meds_opiods %>%
     filter(
         !str_detect(med, "opium"),
@@ -256,18 +275,18 @@ tmp_meds <- data_meds_opiods %>%
     mutate(
         type = if_else(
             str_detect(route, "IV"),
-            "opiod_iv",
-            "opiod_po"
+            "Opiod IV",
+            "Opiod PO"
         )
     ) %>%
     select(millennium.id, med.datetime, type)
 
 tmp_iv <- tmp_meds %>%
-    filter(type == "opiod_iv")
+    filter(type == "Opiod IV")
 
 tmp_pca <- data_pca %>%
     select(millennium.id, med.datetime = event.datetime) %>%
-    mutate(type = "pca")
+    mutate(type = "PCA")
 
 incl <- tmp_iv %>%
     bind_rows(tmp_pca) %>%
@@ -275,7 +294,7 @@ incl <- tmp_iv %>%
 
 tmp_modal <- data_meds_modal %>%
     semi_join(incl, by = "millennium.id") %>%
-    mutate(type = "modal") %>%
+    mutate(type = "Multi-modal") %>%
     select(millennium.id, med.datetime, type)
 
 df <- tmp_meds %>%
@@ -291,44 +310,29 @@ df <- tmp_meds %>%
     ) %>%
     mutate_at("time.admit", as.numeric) 
 
-# RColorBrewer::brewer.pal.info
-
-
 df %>%
     semi_join(pts_iv, by = "millennium.id") %>%
     mutate_at("millennium.id", as.numeric) %>%
     mutate_at("type", as.factor) %>%
-    # filter(type != "modal") %>%
-    plot_ly() %>%
+    plot_ly(
+        colors = brewer.pal(4, "Paired"),
+        symbols = c(
+            "circle-open", 
+            "triangle-up-open", 
+            "square-open",
+            "cross-thin-open")
+    ) %>%
     add_markers(
         x = ~time.admit,
         y = ~millennium.id,
-        symbol = ~type,
-        # colors = "Set1",
-        # marker = list(symbol = "circle-open")
-        marker = list(
-            # size = 5,
-            # opacity = 0.5
-            # line = list(
-            #     width = 2
-            # )
-        )
+        color = ~type,
+        symbol = ~type
+    ) %>%
+    layout(
+        xaxis = list(title = "Time from admission (hours)"),
+        yaxis = list(title = "Patient")
     )
-    
-    # ggplot(
-    #     aes(
-    #         x = time.admit,
-    #         y = as.numeric(millennium.id),
-    #         color = type
-    #     )
-    # ) +
-    # geom_point(alpha = 0.5) +
-    # xlab("Time from admission (hours)") +
-    # ylab("Patient") +
-    # scale_color_brewer(palette = "Dark2") +
-    # coord_cartesian(xlim = c(0, 150)) +
-    # theme_bg()
-    # 
+
 
 ```
 
@@ -350,6 +354,17 @@ df %>%
     coord_flip() +
     theme_bg()
 ```
+
+```{r}
+df %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    ggplot(aes(x = time.admit, fill = type)) +
+    geom_histogram(binwidth = 24) +
+    # geom_dotplot(alpha = 0.5, binwidth = 24, dotsize = 0.5, method = "histodot") +
+    scale_fill_brewer(NULL, palette = "Paired") +
+    theme_bg()
+```
+
 
 ```{r, eval=FALSE}
 set.seed(77123)
