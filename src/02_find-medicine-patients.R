@@ -15,6 +15,7 @@ dirr::gzip_files(dir_raw)
 #       - Facility (Curr): HH HERMANN
 #       - Admit Date: 12/1/2017 - 2/28/2018
 #       - Nurse Unit All: HH 3CP;HH 4WCP
+# pedi = HC CCN
 
 pts_cullen <- read_data(dir_raw, "patients", FALSE) %>%
     as.patients()
@@ -47,7 +48,7 @@ data_encounters <- read_data(dir_raw, "encounters", FALSE) %>%
 
 # meds -------------------------------------------------
 
-opiods <- med_lookup(
+opioids <- med_lookup(
     c(
         "narcotic analgesics", 
         "narcotic analgesic combinations"
@@ -65,10 +66,12 @@ raw_meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     mutate_at("orig.order.id", funs(coalesce(., order.id))) %>%
     filter(med.location %in% cullen) 
 
-data_meds_opiods <- raw_meds %>%
-    semi_join(opiods, by = c("med" = "med.name")) 
+data_meds_opioids <- raw_meds %>%
+    semi_join(opioids, by = c("med" = "med.name")) 
 
-mbo_order_id <- concat_encounters(data_meds_opiods$orig.order.id)
+mbo_order_id <- concat_encounters(data_meds_opioids$orig.order.id)
+
+# celecoxib, ibuprofen
 
 data_meds_modal <- raw_meds %>%
     filter(
@@ -82,7 +85,7 @@ data_meds_modal <- raw_meds %>%
 
 data_meds_po <- raw_meds %>%
     anti_join(
-        data_meds_opiods, 
+        data_meds_opioids, 
         by = c("millennium.id", "orig.order.id")
     ) %>%
     filter(
@@ -94,7 +97,7 @@ data_meds_po <- raw_meds %>%
     )
 
 # run MBO query
-#   * Opiod Stewardship/07_orders-details_opiods
+#   * Opiod Stewardship/07_orders-details_opioids
 
 data_orders <- read_data(dir_raw, "orders", FALSE) %>%
     # as.order_detail() %>%
@@ -114,7 +117,7 @@ data_orders <- read_data(dir_raw, "orders", FALSE) %>%
         .keep_all = TRUE
     ) 
 
-# meds_orders <- data_meds_opiods %>%
+# meds_orders <- data_meds_opioids %>%
 #     left_join(
 #         data_orders,
 #         by = c("millennium.id", "orig.order.id" = "order.id")

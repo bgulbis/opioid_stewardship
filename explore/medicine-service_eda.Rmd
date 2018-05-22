@@ -22,7 +22,7 @@ library(plotly)
 
 x <- dirr::get_rds("../data/tidy/vizient")
 
-pts_iv <- data_meds_opiods %>%
+pts_iv <- data_meds_opioids %>%
     filter(
         is.na(event.tag),
         str_detect(route, "IV")
@@ -33,8 +33,8 @@ pts_iv <- data_meds_opiods %>%
 
 # All Medicine Service-Line Patients
 
-```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line. Any Opiod includes all opiods via any route as well as tramadol, whereas Non-Tramadol excludes all tramadol doses.", fig.width=8}
-pts <- data_meds_opiods %>%
+```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line. Any Opioid includes all opioids via any route as well as tramadol, whereas Non-Tramadol excludes all tramadol doses.", fig.width=8}
+pts <- data_meds_opioids %>%
     filter(is.na(event.tag)) %>%
     left_join(
         data_orders, 
@@ -43,11 +43,11 @@ pts <- data_meds_opiods %>%
     add_count(millennium.id, prn) %>%
     mutate(
         not.ultram = med != "tramadol",
-        iv.opiods = str_detect(route, "IV")
+        iv.opioids = str_detect(route, "IV")
     ) %>%
     group_by(millennium.id, n, prn) %>%
     summarize_at(
-        c("not.ultram", "iv.opiods"),
+        c("not.ultram", "iv.opioids"),
         sum,
         na.rm = TRUE
     ) %>%
@@ -55,7 +55,7 @@ pts <- data_meds_opiods %>%
 
 pts_summary <- pts %>%
     group_by(millennium.id) %>%
-    gather(key, val, all.doses, not.ultram, iv.opiods) %>%
+    gather(key, val, all.doses, not.ultram, iv.opioids) %>%
     unite("key.prn", key, prn, sep = "_") %>%
     spread(key.prn, val) %>%
     mutate_if(is.integer, na_if, y = 0L)
@@ -64,7 +64,7 @@ pts_summary %>%
     mutate_if(is.integer, funs(!is.na(.))) %>%
     mutate(
         all.doses_Combined = all.doses_PRN | all.doses_Scheduled,
-        iv.opiods_Combined = iv.opiods_PRN | iv.opiods_Scheduled,
+        iv.opioids_Combined = iv.opioids_PRN | iv.opioids_Scheduled,
         not.ultram_Combined = not.ultram_PRN | not.ultram_Scheduled
     ) %>%
     ungroup() %>%
@@ -77,9 +77,9 @@ pts_summary %>%
         "key",
         str_replace_all,
         pattern = c(
-            "all.doses" = "Any Opiod",
+            "all.doses" = "Any Opioid",
             "not.ultram" = "Non-Tramadol",
-            "iv.opiods" = "IV Opiod"
+            "iv.opioids" = "IV Opioid"
         )
     ) %>%
     mutate_at("key", as_factor) %>%
@@ -94,7 +94,7 @@ pts_summary %>%
 
 ```
 
-# IV Opiod Patients
+# IV Opioid Patients
 
 ```{r}
 data_demog %>%
@@ -130,7 +130,7 @@ data_demog %>%
         )
     ) %>%
     knitr::kable(
-        caption = "Demographics of patients receiving IV opiods",
+        caption = "Demographics of patients receiving IV opioids",
         digits = 1,
         col.names = c(
             "Variable",
@@ -175,7 +175,7 @@ data_demog %>%
     knitr::kable(
         format = "html",
         digits = 0,
-        # caption = "Demographics of patients receiving IV opiods",
+        # caption = "Demographics of patients receiving IV opioids",
         col.names = c(
             "Measure",
             "N",
@@ -189,8 +189,8 @@ data_demog %>%
 
 ```
 
-```{r, fig.cap="Among patients who received IV opiods, this is the percent who received other pain therapies. Here, PO is determined by administration of other PO medications within 4 hours before or after the IV opiod was given, multi-modal therapy administration within 8 hours of IV opiod use, and PCA use charted within 12 hours of IV opiod administration."}
-tmp_opiods <- data_meds_opiods %>%
+```{r, fig.cap="Among patients who received IV opioids, this is the percent who received other pain therapies. Here, PO is determined by administration of other PO medications within 4 hours before or after the IV opioid was given, multi-modal therapy administration within 8 hours of IV opioid use, and PCA use charted within 12 hours of IV opioid administration."}
+tmp_opioids <- data_meds_opioids %>%
     semi_join(pts_iv, by = "millennium.id") %>%
     filter(str_detect(route, "IV")) %>%
     distinct(millennium.id, med.datetime) %>%
@@ -198,7 +198,7 @@ tmp_opiods <- data_meds_opiods %>%
 
 tmp_po <- data_meds_po %>%
     semi_join(pts_iv, by = "millennium.id") %>%
-    left_join(tmp_opiods, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
     filter(
         med.datetime >= iv.datetime - hours(4),
         med.datetime <= iv.datetime + hours(4)
@@ -208,7 +208,7 @@ tmp_po <- data_meds_po %>%
 
 tmp_pca <- data_pca %>%
     semi_join(pts_iv, by = "millennium.id") %>%
-    left_join(tmp_opiods, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
     filter(
         event.datetime >= iv.datetime - hours(12),
         event.datetime <= iv.datetime + hours(12)
@@ -219,7 +219,7 @@ tmp_pca <- data_pca %>%
 
 tmp_modal <- data_meds_modal %>%
     semi_join(pts_iv, by = "millennium.id") %>%
-    left_join(tmp_opiods, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
     filter(
         med.datetime >= iv.datetime - hours(8),
         med.datetime <= iv.datetime + hours(8)
@@ -242,7 +242,7 @@ pts_iv %>%
     ggplot(aes(x = key, y = value)) +
     geom_bar(stat = "identity") +
     xlab("Pain therapy") +
-    ylab("IV Opiod Patients (%)") +
+    ylab("IV Opioid Patients (%)") +
     coord_cartesian(ylim = c(0, 100)) +
     theme_bg(xticks = FALSE)
 
@@ -257,7 +257,7 @@ data_drg %>%
     top_n(20, n) %>%
     knitr::kable(
         # booktabs = TRUE,
-        caption = "Top 20 DRGs among patients receiving IV opiods",
+        caption = "Top 20 DRGs among patients receiving IV opioids",
         col.names = c(
             "DRG",
             "Description",
@@ -267,7 +267,7 @@ data_drg %>%
 ```
 
 ```{r}
-tmp_meds <- data_meds_opiods %>%
+tmp_meds <- data_meds_opioids %>%
     filter(
         !str_detect(med, "opium"),
         med != "tramadol"
@@ -275,14 +275,14 @@ tmp_meds <- data_meds_opiods %>%
     mutate(
         type = if_else(
             str_detect(route, "IV"),
-            "Opiod IV",
-            "Opiod PO"
+            "Opioid IV",
+            "Opioid PO"
         )
     ) %>%
     select(millennium.id, med.datetime, type)
 
 tmp_iv <- tmp_meds %>%
-    filter(type == "Opiod IV")
+    filter(type == "Opioid IV")
 
 tmp_pca <- data_pca %>%
     select(millennium.id, med.datetime = event.datetime) %>%
@@ -365,7 +365,7 @@ df %>%
 
 ```
 
-```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opiods", eval=FALSE}
+```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opioids", eval=FALSE}
 medians <- df %>%
     semi_join(pts_iv, by = "millennium.id") %>%
     group_by(type) %>%
