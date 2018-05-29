@@ -249,26 +249,68 @@ pts_iv %>%
 
 ```
 
-
 ```{r}
+tmp_drg_po <- data_drg %>%
+    semi_join(tmp_po, by = "millennium.id") %>%
+    count(drg) %>%
+    mutate_at("n", funs(. / nrow(tmp_po))) %>%
+    select(drg, n.po = n) 
+
 data_drg %>%
     semi_join(pts_iv, by = "millennium.id") %>%
-    count(drg, drg.desc, sort = TRUE) %>%
+    add_count(drg) %>%
+    distinct(drg, n, .keep_all = TRUE) %>%
     mutate_at("n", funs(. / nrow(pts_iv))) %>%
+    select(drg, drg.desc, n) %>%
+    left_join(tmp_drg_po, by = "drg") %>%
     datatable(
         caption = "DRGs among patients receiving IV opioids",
         rownames = FALSE,
         colnames = c(
             "DRG",
             "Description",
-            "Patients (%)"
+            "All Patients (%)",
+            "PO Med Patients (%)"
         ),
         options = list(
-            pageLength = 20,
+            pageLength = 25,
             order = list(list(2, "desc"))
         )
     ) %>%
-    formatPercentage(3, digits = 1)
+    formatPercentage(c(3, 4), digits = 1)
+```
+
+```{r}
+tmp_drg_po <- data_drg %>%
+    semi_join(tmp_po, by = "millennium.id") %>%
+    mutate(drg.group = str_extract(drg, "..")) %>%
+    count(drg.group) %>%
+    mutate_at("n", funs(. / nrow(tmp_po))) %>%
+    select(drg.group, n.po = n) 
+
+data_drg %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    mutate(drg.group = str_extract(drg, "..")) %>%
+    add_count(drg.group) %>%
+    distinct(drg.group, n, .keep_all = TRUE) %>%
+    mutate_at("n", funs(. / nrow(pts_iv))) %>%
+    select(drg.group, drg.desc, n) %>%
+    left_join(tmp_drg_po, by = "drg.group") %>%
+    datatable(
+        caption = "Grouped DRGs among patients receiving IV opioids",
+        rownames = FALSE,
+        colnames = c(
+            "DRG Group",
+            "Description",
+            "All Patients (%)",
+            "PO Med Patients (%)"
+        ),
+        options = list(
+            pageLength = 25,
+            order = list(list(2, "desc"))
+        )
+    ) %>%
+    formatPercentage(c(3, 4), digits = 1)
 ```
 
 ```{r}
@@ -343,6 +385,36 @@ df <- tmp_meds %>%
 
 ```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission. Click on the legend to filter by types of pain medications or drag the cursor over a section of the graph to zoom."}
 df %>%
+    plot_ly(
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6
+    ) %>%
+    add_histogram(
+        # histnorm = "density",
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 0.5
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Time from admission (days)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+```
+
+```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission among patients who received PO medications at the same time as IV opiods."}
+df %>%
+    semi_join(tmp_po, by = "millennium.id") %>%
     plot_ly(
         x = ~time.admit, 
         color = ~type,
