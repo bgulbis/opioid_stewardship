@@ -79,7 +79,10 @@ data_meds_modal <- raw_meds %>%
             "acetaminophen",
             "gabapentin",
             "pregabalin",
-            "tramadol"
+            "tramadol",
+            "ibuprofen",
+            "celecoxib",
+            "ketorolac"
         )
     )
 
