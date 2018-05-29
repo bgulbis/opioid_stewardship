@@ -23,7 +23,7 @@ mbo_id <- concat_encounters(pts_pedi$millennium.id)
 
 # run MBO query
 #   * Encounters
-#   * Demographics
+#   * Demographics - Pedi
 #   * Diagnosis - DRG
 #   * Diagnosis - ICD-9/10-CM
 #   * Location History
@@ -206,7 +206,9 @@ data_drg <- read_data(dir_raw, "drg", FALSE) %>%
 # demographics -----------------------------------------
 
 data_demog <- read_data(dir_raw, "demographics", FALSE) %>%
-    as.demographics() %>%
+    as.demographics(
+        extras = list("age.days" = "Age- Days (At Admit)")
+    ) %>%
     semi_join(data_pedi, by = "millennium.id")
 
 # data sets --------------------------------------------
