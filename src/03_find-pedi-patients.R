@@ -6,7 +6,7 @@ library(edwr)
 
 dir_raw <- "data/raw/pedi"
 tz <- "US/Central"
-cullen <- c("HC CCN")
+pedi <- c("HC CCN")
 
 dirr::gzip_files(dir_raw)
 
@@ -16,10 +16,10 @@ dirr::gzip_files(dir_raw)
 #       - Admit Date: 12/1/2017 - 2/28/2018
 #       - Nurse Unit All: HC CCN
 
-pts_cullen <- read_data(dir_raw, "patients", FALSE) %>%
+pts_pedi <- read_data(dir_raw, "patients", FALSE) %>%
     as.patients()
 
-mbo_id <- concat_encounters(pts_cullen$millennium.id)
+mbo_id <- concat_encounters(pts_pedi$millennium.id)
 
 # run MBO query
 #   * Encounters
@@ -32,17 +32,17 @@ mbo_id <- concat_encounters(pts_cullen$millennium.id)
 
 # location ---------------------------------------------
 
-data_cullen <- read_data(dir_raw, "locations", FALSE) %>%
+data_pedi <- read_data(dir_raw, "locations", FALSE) %>%
     as.locations() %>%
     filter(
-        unit.name %in% cullen,
+        unit.name %in% pedi,
         arrive.datetime < mdy("3/1/2018", tz = tz),
         depart.datetime >= mdy("12/1/2017", tz = tz)
     )
 
 data_encounters <- read_data(dir_raw, "encounters", FALSE) %>%
     as.encounters() %>%
-    semi_join(data_cullen, by = "millennium.id") %>%
+    semi_join(data_pedi, by = "millennium.id") %>%
     select(millennium.id, admit.datetime)
 
 # meds -------------------------------------------------
@@ -59,11 +59,11 @@ opioids <- med_lookup(
 
 raw_meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     as.meds_inpt() %>%
-    semi_join(data_cullen, by = "millennium.id") %>%
+    semi_join(data_pedi, by = "millennium.id") %>%
     mutate(orig.order.id = order.parent.id) %>%
     mutate_at("orig.order.id", na_if, y = 0L) %>%
     mutate_at("orig.order.id", funs(coalesce(., order.id))) %>%
-    filter(med.location %in% cullen) 
+    filter(med.location %in% pedi) 
 
 data_meds_opioids <- raw_meds %>%
     semi_join(opioids, by = c("med" = "med.name")) 
@@ -142,8 +142,8 @@ pca_actions <- c(
 
 data_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
     as.pain_scores() %>%
-    semi_join(data_cullen, by = "millennium.id") %>%
-    filter(event.location %in% cullen) %>%
+    semi_join(data_pedi, by = "millennium.id") %>%
+    filter(event.location %in% pedi) %>%
     select(millennium.id:event.result) %>%
     mutate_at("event", str_replace_all, pattern = pca_actions) %>%
     distinct() %>%
@@ -197,17 +197,17 @@ data_pca <- read_data(dir_raw, "pain-pca", FALSE) %>%
 
 data_icd <- read_data(dir_raw, "diagnosis", FALSE) %>%
     as.diagnosis() %>%
-    semi_join(data_cullen, by = "millennium.id")
+    semi_join(data_pedi, by = "millennium.id")
 
 data_drg <- read_data(dir_raw, "drg", FALSE) %>%
     as.drg()%>%
-    semi_join(data_cullen, by = "millennium.id")
+    semi_join(data_pedi, by = "millennium.id")
 
 # demographics -----------------------------------------
 
 data_demog <- read_data(dir_raw, "demographics", FALSE) %>%
     as.demographics() %>%
-    semi_join(data_cullen, by = "millennium.id")
+    semi_join(data_pedi, by = "millennium.id")
 
 # data sets --------------------------------------------
 
