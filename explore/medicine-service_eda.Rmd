@@ -19,6 +19,7 @@ library(edwr)
 library(themebg)
 library(RColorBrewer)
 library(plotly)
+library(DT)
 
 x <- dirr::get_rds("../data/tidy/vizient")
 
@@ -253,17 +254,21 @@ pts_iv %>%
 data_drg %>%
     semi_join(pts_iv, by = "millennium.id") %>%
     count(drg, drg.desc, sort = TRUE) %>%
-    mutate_at("n", funs(round(. / nrow(pts_iv) * 100, 1))) %>%
-    top_n(20, n) %>%
-    knitr::kable(
-        # booktabs = TRUE,
-        caption = "Top 20 DRGs among patients receiving IV opioids",
-        col.names = c(
+    mutate_at("n", funs(. / nrow(pts_iv))) %>%
+    datatable(
+        caption = "DRGs among patients receiving IV opioids",
+        rownames = FALSE,
+        colnames = c(
             "DRG",
             "Description",
             "Patients (%)"
+        ),
+        options = list(
+            pageLength = 20,
+            order = list(list(2, "desc"))
         )
-    )
+    ) %>%
+    formatPercentage(3, digits = 1)
 ```
 
 ```{r}
