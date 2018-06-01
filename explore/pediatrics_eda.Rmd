@@ -32,9 +32,9 @@ pts_iv <- data_meds_opioids %>%
 
 ```
 
-# All Medicine Service-Line Patients
+# All Patients
 
-```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line. Any Opioid includes all opioids via any route as well as tramadol, whereas Non-Tramadol excludes all tramadol doses.", fig.width=8}
+```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the CCN unit. Any Opioid includes all opioids via any route as well as tramadol, whereas Non-Tramadol excludes all tramadol doses.", fig.width=8}
 pts <- data_meds_opioids %>%
     filter(is.na(event.tag)) %>%
     left_join(
@@ -88,7 +88,7 @@ pts_summary %>%
     ggplot(aes(x = key, y = value)) +
     geom_bar(stat = "identity") +
     xlab(NULL) +
-    ylab("Medicine Patients (%)") +
+    ylab("Patients (%)") +
     facet_wrap(~ prn) +
     coord_cartesian(ylim = c(0, 100)) +
     theme_bg(xticks = FALSE)
