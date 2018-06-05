@@ -412,6 +412,22 @@ df %>%
 
 ```
 
+```{r, eval=FALSE}
+df %>%
+    distinct(millennium.id, type, .keep_all = TRUE) %>%
+    group_by(millennium.id) %>%
+    mutate(
+        type_count = 1,
+        order = cumsum(type_count)
+    ) %>%
+    ungroup() %>%
+    count(order, type) %>%
+    mutate_at(c("type", "order"), factor) %>%
+    plot_ly() %>%
+    add_markers(x = ~order, y = ~type, size = ~n)
+```
+
+
 ```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission among patients who received PO medications at the same time as IV opiods."}
 df %>%
     semi_join(tmp_po, by = "millennium.id") %>%
@@ -441,6 +457,134 @@ df %>%
     )
 
 ```
+
+# Sickle Cell Patients
+
+```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission among patients with sickle cell DRG."}
+sickle_cell <- data_drg %>%
+    filter(drg == "811" | drg == "812") 
+
+df1 <- df %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    mutate_at("time.admit", round, digits = 0) %>%
+    distinct(millennium.id, type, time.admit, .keep_all = TRUE) %>%
+    arrange(type)
+
+p1 <- df1 %>%
+    semi_join(data_pca, by = "millennium.id") %>%
+    plot_ly(       
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6,
+        legendgroup = ~type
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 1
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Days from admission (PCA)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+p2 <- df1 %>%
+    anti_join(data_pca, by = "millennium.id") %>%
+    plot_ly(       
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6,
+        legendgroup = ~type,
+        showlegend = FALSE
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 1
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Days from admission (No PCA)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+# pca vs no pca (timeline, los)
+# number of iv doses
+
+```
+
+```{r, fig.cap="Number of patients receiving each number of doses of pain medications, among sickle cell patients receiving a PCA compared with those who did not."}
+df2 <- df %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    mutate_at("time.admit", round, digits = 0) %>%
+    count(millennium.id, type) %>%
+    arrange(type)
+
+p1 <- df2 %>%
+    semi_join(data_pca, by = "millennium.id") %>%
+    plot_ly(        
+        x = ~n, 
+        color = ~type,
+        legendgroup = ~type,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 100,
+            size = 5
+        )
+    ) %>%
+    layout(
+        xaxis = list(title = "Number of doses (PCA)"),
+        yaxis = list(title = "Number of patients")
+    )
+
+p2 <- df2 %>%
+    anti_join(data_pca, by = "millennium.id") %>%
+    plot_ly(        
+        x = ~n, 
+        color = ~type,
+        legendgroup = ~type,
+        showlegend = FALSE,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 100,
+            size = 5
+        )
+    ) %>%
+    layout(
+        xaxis = list(title = "Number of doses (No PCA)"),
+        yaxis = list(title = "Number of patients")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+
+```
+
 
 ```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opioids", eval=FALSE}
 medians <- df %>%
