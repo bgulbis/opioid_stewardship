@@ -63,8 +63,8 @@ raw_meds <- read_data(dir_raw, "meds-inpt", FALSE) %>%
     semi_join(data_cullen, by = "millennium.id") %>%
     mutate(orig.order.id = order.parent.id) %>%
     mutate_at("orig.order.id", na_if, y = 0L) %>%
-    mutate_at("orig.order.id", funs(coalesce(., order.id))) %>%
-    filter(med.location %in% cullen) 
+    mutate_at("orig.order.id", funs(coalesce(., order.id))) 
+    # filter(med.location %in% cullen) 
 
 data_meds_opioids <- raw_meds %>%
     semi_join(opioids, by = c("med" = "med.name")) 
