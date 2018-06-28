@@ -39,6 +39,10 @@ pts_iv <- data_meds_opioids %>%
     ) %>%
     distinct(millennium.id)
 
+sickle_cell <- data_drg %>%
+    filter(drg == "811" | drg == "812") %>%
+    distinct(millennium.id)
+
 ```
 
 # All Medicine Service-Line Patients
@@ -332,7 +336,7 @@ data_drg %>%
     formatPercentage(c(3, 4), digits = 1)
 ```
 
-```{r}
+```{r df}
 tmp_meds <- data_meds_opioids %>%
     filter(
         !str_detect(med, "opium"),
@@ -480,12 +484,6 @@ df %>%
 ```
 
 # Sickle Cell Patients
-
-```{r}
-sickle_cell <- data_drg %>%
-    filter(drg == "811" | drg == "812") %>%
-    distinct(millennium.id)
-```
 
 ```{r}
 data_demog %>%
@@ -1143,6 +1141,224 @@ subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
 
 ```
 
+```{r mme}
+tmp_mme <- data_meds_opioids %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    filter(
+        !str_detect(med, "opium"),
+        med != "tramadol",
+        is.na(event.tag)
+    ) %>%
+    left_join(
+        data_orders, 
+        by = c("millennium.id", "orig.order.id" = "order.id")
+    ) %>%
+    calc_morph_eq() %>%
+    mutate(
+        type = if_else(
+            str_detect(route, "IV"),
+            "Opioid IV",
+            "Opioid PO"
+        )
+    )
+
+pts_pca <- data_pca %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(pca = TRUE)
+
+tmp_pca_mme <- data_pca %>%
+    mutate_at("pca.drug", str_to_lower) %>%
+    mutate(
+        mme.iv = case_when(
+            str_detect(pca.drug, "hydromorphone") ~ total.dose * 6.7,
+            str_detect(pca.drug, "fentanyl") ~ total.dose * 0.1,
+            TRUE ~ total.dose
+        )
+    ) %>%
+    select(millennium.id, med.datetime = event.datetime, mme.iv) %>%
+    mutate(type = "PCA")
+
+df_mme <- tmp_mme %>%
+    bind_rows(tmp_pca_mme) %>%
+    left_join(data_encounters, by = "millennium.id") %>%
+    mutate(
+        time.admit = difftime(
+            med.datetime,
+            admit.datetime,
+            units = "days"
+        )
+    ) %>%
+    arrange(millennium.id, med.datetime) %>%
+    group_by(millennium.id) %>%
+    mutate(mme.iv.cum = cumsum(mme.iv)) %>%
+    left_join(pts_pca, by = "millennium.id") %>%
+    mutate_at(
+        "pca", 
+        funs(
+            if_else(., "PCA", "No PCA", "No PCA")
+        )
+    ) %>%
+    left_join(data_demog, by = "millennium.id") %>%
+    mutate_at("time.admit", as.numeric) 
+
+```
+
+```{r, fig.cap="Cummulative MME over the first 10 days of admission by route among sickle cell patients with and without a PCA, during the first 10 days of admission", eval=FALSE}
+df_mme %>%
+    # filter(length.stay <= 10) %>%
+    filter(time.admit <= 10) %>%
+    ggplot(aes(x = time.admit, y = mme.iv.cum)) +
+    geom_point(aes(color = type), shape = 1) +
+    xlab("Time from admission (days)") +
+    ylab("Amount of opiod (MME)") +
+    scale_color_discrete("Route") +
+    facet_wrap(~ pca) +
+    theme_bg()
+```
+
+```{r, fig.cap="Cummulative MME over the first 10 days of admission by route among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df2_mme <- df_mme %>%
+    filter(time.admit <= 10) %>%
+    mutate_at(
+        "type", 
+        factor, 
+        levels = c("Multi-modal", "Opioid IV", "Opioid PO", "PCA")
+    )
+
+p1 <- df2_mme %>%
+    filter(pca == "PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (PCA)"),
+        yaxis = list(title = "Total Opiod (MME)")
+    )
+
+p2 <- df2_mme %>%
+    filter(pca == "No PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        showlegend = FALSE,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (No PCA)"),
+        yaxis = list(title = "Total Opioid (MME)")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+
+```
+
+```{r, fig.cap="Cummulative MME, excluding PCA doses, over the first 10 days of admission by route among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df_mme_alt <- df2_mme %>%
+    filter(type != "PCA") %>%
+    mutate(mme.iv.cum = cumsum(mme.iv)) %>%
+    filter(time.admit <= 10)
+
+p1 <- df_mme_alt %>%
+    filter(pca == "PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (PCA)"),
+        yaxis = list(title = "Total Opiod (MME)")
+    )
+
+p2 <- df_mme_alt %>%
+    filter(pca == "No PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        showlegend = FALSE,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (No PCA)"),
+        yaxis = list(title = "Total Opioid (MME)")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+
+```
+
+
+```{r, fig.cap="Total amount of opioids, in MME, received by route among sickle cell patients with and without a PCA, during the first 10 days of admission", eval=FALSE}
+df_mme %>%
+    # filter(length.stay <= 10) %>%
+    filter(time.admit <= 10) %>%
+    group_by(millennium.id, pca, type, length.stay) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    ungroup() %>%
+    mutate(mme.iv.day = mme.iv / length.stay) %>%
+    ggplot(aes(x = pca, y = mme.iv.day)) +
+    geom_boxplot(aes(color = type)) +
+     xlab("PCA Use") +
+    ylab("Amount of opiod (MME)") +
+    scale_color_discrete("Route") +
+    theme_bg()
+```
+
+```{r, fig.cap="Distribution of the amount of opioids per day, by route, among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df_mme %>%
+    filter(time.admit <= 10) %>%
+    group_by(millennium.id, pca, type, length.stay) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    ungroup() %>%
+    mutate(mme.iv.day = mme.iv / length.stay) %>%
+    plot_ly(        
+        x = ~type, 
+        y = ~mme.iv.day,
+        color = ~pca
+    ) %>%
+    add_boxplot() %>%
+    layout(
+        xaxis = list(title = "Route"),
+        yaxis = list(title = "Opioid per day (MME)"),
+        boxmode = "group"
+    )
+
+```
+
+```{r, fig.cap="Total amount of opioids per day among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df_mme %>%
+    filter(time.admit <= 10) %>%
+    group_by(millennium.id, pca, length.stay) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    group_by(pca) %>%
+    mutate(mme.iv.day = mme.iv / length.stay) %>%
+    plot_ly(        
+        x = ~pca, 
+        y = ~mme.iv.day
+    ) %>%
+    add_boxplot() %>%
+    layout(
+        xaxis = list(title = "Route"),
+        yaxis = list(title = "Opioid per day (MME)"),
+        boxmode = "group"
+    )
+
+```
 
 ```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opioids", eval=FALSE}
 medians <- df %>%
