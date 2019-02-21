@@ -1,0 +1,1416 @@
+---
+title: "Medicine Service Line"
+subtitle: "Exploratory Analysis"
+author: "Brian Gulbis, PharmD, BCPS"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+    html_document:
+        code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+options(
+    knitr.table.format = "html",
+    knitr.kable.NA = ""
+)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(edwr)
+library(themebg)
+library(RColorBrewer)
+library(plotly)
+library(DT)
+library(broom)
+library(rlang)
+library(kableExtra)
+
+x <- dirr::get_rds("../data/tidy/vizient")
+
+cullen <- c("HH 3CP", "HH 4WCP")
+
+pts_iv <- data_meds_opioids %>%
+    filter(
+        is.na(event.tag),
+        str_detect(route, "IV")
+    ) %>%
+    distinct(millennium.id)
+
+sickle_cell <- data_drg %>%
+    filter(drg == "811" | drg == "812") %>%
+    distinct(millennium.id)
+
+```
+
+# All Medicine Service-Line Patients
+
+```{r, fig.cap="Patients receiving pain medications as a percent of all patients on the medicine service line. Any Opioid includes all opioids via any route as well as tramadol, whereas Non-Tramadol excludes all tramadol doses.", fig.width=8}
+pts <- data_meds_opioids %>%
+    filter(
+        is.na(event.tag),
+        med.location %in% cullen
+    ) %>%
+    left_join(
+        data_orders, 
+        by = c("millennium.id", "orig.order.id" = "order.id")
+    ) %>%
+    add_count(millennium.id, prn) %>%
+    mutate(
+        not.ultram = med != "tramadol",
+        iv.opioids = str_detect(route, "IV")
+    ) %>%
+    group_by(millennium.id, n, prn) %>%
+    summarize_at(
+        c("not.ultram", "iv.opioids"),
+        sum,
+        na.rm = TRUE
+    ) %>%
+    rename(all.doses = n) 
+
+pts_summary <- pts %>%
+    group_by(millennium.id) %>%
+    gather(key, val, all.doses, not.ultram, iv.opioids) %>%
+    unite("key.prn", key, prn, sep = "_") %>%
+    spread(key.prn, val) %>%
+    mutate_if(is.integer, na_if, y = 0L)
+    
+pts_summary %>%
+    mutate_if(is.integer, funs(!is.na(.))) %>%
+    mutate(
+        all.doses_Combined = all.doses_PRN | all.doses_Scheduled,
+        iv.opioids_Combined = iv.opioids_PRN | iv.opioids_Scheduled,
+        not.ultram_Combined = not.ultram_PRN | not.ultram_Scheduled
+    ) %>%
+    ungroup() %>%
+    summarize_if(is.logical, sum) %>%
+    mutate_if(is.integer, funs(. / nrow(data_demog) * 100)) %>%
+    gather(key, value) %>%
+    separate(key, into = c("key", "prn"), sep = "_") %>%
+    arrange(desc(value)) %>%
+    mutate_at(
+        "key",
+        str_replace_all,
+        pattern = c(
+            "all.doses" = "Any Opioid",
+            "not.ultram" = "Non-Tramadol",
+            "iv.opioids" = "IV Opioid"
+        )
+    ) %>%
+    mutate_at("key", as_factor) %>%
+    # mutate_at("key", fct_rev) %>%
+    ggplot(aes(x = key, y = value)) +
+    geom_bar(stat = "identity") +
+    xlab(NULL) +
+    ylab("Medicine Patients (%)") +
+    facet_wrap(~ prn) +
+    coord_cartesian(ylim = c(0, 100)) +
+    theme_bg(xticks = FALSE)
+
+```
+
+# IV Opioid Patients
+
+```{r}
+data_demog %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    mutate(pts = TRUE) %>%
+    group_by(pts) %>%
+    summarize_at(
+        c("age", "length.stay"),
+        funs(
+            mean,
+            sd, 
+            median,
+            q25 = quantile(., 0.25), 
+            q75 = quantile(., 0.75)
+        ),
+        na.rm = TRUE
+    ) %>%
+    gather(key, value, -pts) %>%
+    separate(key, c("var", "measure"), sep = "_") %>%
+    spread(measure, value) %>%
+    select(
+        var,
+        mean,
+        sd,
+        median,
+        q25,
+        q75
+    ) %>%
+    mutate_at(
+        "var", 
+        str_replace_all,
+        pattern = c(
+            "age" = "Age",
+            "length.stay" = "Length of stay"
+        )
+    ) %>%
+    knitr::kable(
+        caption = "Demographics of patients receiving IV opioids",
+        digits = 1,
+        col.names = c(
+            "Variable",
+            "Mean",
+            "Std Dev",
+            "Median",
+            "25th",
+            "75th"
+        )
+    )
+```
+
+```{r}
+data_demog %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    mutate(
+        dispo.group = case_when(
+            str_detect(disposition, "Hospice|Deceased") ~ "Deceased / Hospice",
+            str_detect(disposition, "Home|Left") ~ "Home",
+            str_detect(disposition, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
+        )
+    ) %>%
+    mutate_at("race", funs(coalesce(., "Unknown"))) %>%
+    add_count(gender) %>%
+    add_count(race) %>%
+    add_count(dispo.group) %>%
+    unite(gender, gender, n) %>%
+    unite(race, race, nn) %>%
+    unite(dispo.group, dispo.group, nnn) %>%
+    select(
+        gender,
+        race,
+        dispo.group
+    ) %>%
+    gather(measure, value) %>%
+    distinct() %>%
+    separate(value, c("var", "value"), sep = "_") %>%
+    mutate_at("value", as.numeric) %>%
+    mutate(pct = value / nrow(pts_iv) * 100) %>%
+    arrange(measure, desc(value)) %>%
+    select(-measure) %>%
+    knitr::kable(
+        format = "html",
+        digits = 0,
+        # caption = "Demographics of patients receiving IV opioids",
+        col.names = c(
+            "Measure",
+            "N",
+            "(%)"
+        )
+    ) %>%
+    kable_styling(full_width = TRUE) %>%
+    group_rows("Disposition", 1, 3) %>%
+    group_rows("Gender", 4, 5) %>%
+    group_rows("Race", 6, 10)
+
+```
+
+```{r, fig.cap="Among patients who received IV opioids, this is the percent who received other pain therapies. Here, PO is determined by administration of other PO medications within 4 hours before or after the IV opioid was given, multi-modal therapy administration within 8 hours of IV opioid use, and PCA use charted within 12 hours of IV opioid administration."}
+tmp_opioids <- data_meds_opioids %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    filter(
+        str_detect(route, "IV"),
+        med.location %in% cullen
+    ) %>%
+    distinct(millennium.id, med.datetime) %>%
+    rename(iv.datetime = med.datetime)
+
+tmp_po <- data_meds_po %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
+    filter(
+        med.datetime >= iv.datetime - hours(4),
+        med.datetime <= iv.datetime + hours(4),
+        med.location %in% cullen
+    ) %>%
+    distinct(millennium.id) %>%
+    mutate(PO = TRUE)
+
+tmp_pca <- data_pca %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
+    filter(
+        event.datetime >= iv.datetime - hours(12),
+        event.datetime <= iv.datetime + hours(12)
+    ) %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(PCA = TRUE)
+
+tmp_modal <- data_meds_modal %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
+    filter(
+        med.datetime >= iv.datetime - hours(8),
+        med.datetime <= iv.datetime + hours(8),
+        med.location %in% cullen
+    ) %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(modal = TRUE) 
+
+pts_iv %>%
+    left_join(tmp_po, by = "millennium.id") %>%
+    left_join(tmp_pca, by = "millennium.id") %>%
+    left_join(tmp_modal, by = "millennium.id") %>%
+    ungroup() %>%
+    summarize_at(c("PO", "PCA", "modal"), sum, na.rm = TRUE) %>%
+    mutate_at(c("PO", "PCA", "modal"), funs(. / nrow(pts_iv) * 100)) %>%
+    rename(`Multi-modal` = modal) %>%
+    gather(key, value) %>%
+    arrange(desc(value)) %>%
+    mutate_at("key", as_factor) %>%
+    ggplot(aes(x = key, y = value)) +
+    geom_bar(stat = "identity") +
+    xlab("Pain therapy") +
+    ylab("IV Opioid Patients (%)") +
+    coord_cartesian(ylim = c(0, 100)) +
+    theme_bg(xticks = FALSE)
+
+```
+
+```{r}
+tmp_drg_po <- data_drg %>%
+    semi_join(tmp_po, by = "millennium.id") %>%
+    count(drg) %>%
+    mutate_at("n", funs(. / nrow(tmp_po))) %>%
+    select(drg, n.po = n) 
+
+data_drg %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    add_count(drg) %>%
+    distinct(drg, n, .keep_all = TRUE) %>%
+    mutate_at("n", funs(. / nrow(pts_iv))) %>%
+    select(drg, drg.desc, n) %>%
+    left_join(tmp_drg_po, by = "drg") %>%
+    datatable(
+        caption = "DRGs among patients receiving IV opioids",
+        rownames = FALSE,
+        colnames = c(
+            "DRG",
+            "Description",
+            "All Patients (%)",
+            "PO Med Patients (%)"
+        ),
+        options = list(
+            pageLength = 25,
+            order = list(list(2, "desc"))
+        )
+    ) %>%
+    formatPercentage(c(3, 4), digits = 1)
+```
+
+```{r}
+tmp_drg_po <- data_drg %>%
+    semi_join(tmp_po, by = "millennium.id") %>%
+    mutate(drg.group = str_extract(drg, "..")) %>%
+    count(drg.group) %>%
+    mutate_at("n", funs(. / nrow(tmp_po))) %>%
+    select(drg.group, n.po = n) 
+
+data_drg %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    mutate(drg.group = str_extract(drg, "..")) %>%
+    add_count(drg.group) %>%
+    distinct(drg.group, n, .keep_all = TRUE) %>%
+    mutate_at("n", funs(. / nrow(pts_iv))) %>%
+    select(drg.group, drg.desc, n) %>%
+    left_join(tmp_drg_po, by = "drg.group") %>%
+    datatable(
+        caption = "Grouped DRGs among patients receiving IV opioids",
+        rownames = FALSE,
+        colnames = c(
+            "DRG Group",
+            "Description",
+            "All Patients (%)",
+            "PO Med Patients (%)"
+        ),
+        options = list(
+            pageLength = 25,
+            order = list(list(2, "desc"))
+        )
+    ) %>%
+    formatPercentage(c(3, 4), digits = 1)
+```
+
+```{r df}
+tmp_meds <- data_meds_opioids %>%
+    filter(
+        !str_detect(med, "opium"),
+        med != "tramadol"
+    ) %>%
+    mutate(
+        type = if_else(
+            str_detect(route, "IV"),
+            "Opioid IV",
+            "Opioid PO"
+        )
+    ) %>%
+    select(millennium.id, med.datetime, type, med.location)
+
+tmp_iv <- tmp_meds %>%
+    filter(type == "Opioid IV")
+
+tmp_pca <- data_pca %>%
+    select(millennium.id, med.datetime = event.datetime) %>%
+    mutate(type = "PCA")
+
+incl <- tmp_iv %>%
+    bind_rows(tmp_pca) %>%
+    distinct(millennium.id)
+
+tmp_modal <- data_meds_modal %>%
+    semi_join(incl, by = "millennium.id") %>%
+    mutate(type = "Multi-modal") %>%
+    select(millennium.id, med.datetime, type, med.location)
+
+df <- tmp_meds %>%
+    bind_rows(tmp_pca, tmp_modal) %>%
+    left_join(data_encounters, by = "millennium.id") %>%
+    arrange(millennium.id, med.datetime) %>%
+    mutate(
+        time.admit = difftime(
+            med.datetime,
+            admit.datetime,
+            units = "days"
+        )
+    ) %>%
+    mutate_at("time.admit", as.numeric) %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    mutate_at("type", as.factor) 
+
+# df %>%
+#     mutate_at("millennium.id", as.numeric) %>%
+#     plot_ly(
+#         colors = brewer.pal(4, "Paired"),
+#         symbols = c(
+#             "circle-open", 
+#             "triangle-up-open", 
+#             "square-open",
+#             "cross-thin-open")
+#     ) %>%
+#     add_markers(
+#         x = ~time.admit,
+#         y = ~millennium.id,
+#         color = ~type,
+#         symbol = ~type
+#     ) %>%
+#     layout(
+#         xaxis = list(title = "Time from admission (hours)"),
+#         yaxis = list(title = "Patient")
+#     )
+
+
+```
+
+```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission. Click on the legend to filter by types of pain medications or drag the cursor over a section of the graph to zoom."}
+df %>%
+    filter(med.location %in% cullen) %>%
+    plot_ly(
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6
+    ) %>%
+    add_histogram(
+        # histnorm = "density",
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 0.5
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Time from admission (days)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+```
+
+```{r, eval=FALSE}
+df %>%
+    distinct(millennium.id, type, .keep_all = TRUE) %>%
+    group_by(millennium.id) %>%
+    mutate(
+        type_count = 1,
+        order = cumsum(type_count)
+    ) %>%
+    ungroup() %>%
+    count(order, type) %>%
+    mutate_at(c("type", "order"), factor) %>%
+    plot_ly() %>%
+    add_markers(x = ~order, y = ~type, size = ~n)
+```
+
+
+```{r, fig.cap="Timeline of pain medication administration over first 10 days of admission among patients who received PO medications at the same time as IV opiods."}
+df %>%
+    semi_join(tmp_po, by = "millennium.id") %>%
+    filter(med.location %in% cullen) %>%
+    plot_ly(
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6
+    ) %>%
+    add_histogram(
+        # histnorm = "density",
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 0.5
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Time from admission (days)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+```
+
+# Sickle Cell Patients
+
+```{r}
+data_demog %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    mutate(pts = TRUE) %>%
+    group_by(pts) %>%
+    summarize_at(
+        c("age", "length.stay"),
+        funs(
+            mean,
+            sd, 
+            median,
+            q25 = quantile(., 0.25), 
+            q75 = quantile(., 0.75)
+        ),
+        na.rm = TRUE
+    ) %>%
+    gather(key, value, -pts) %>%
+    separate(key, c("var", "measure"), sep = "_") %>%
+    spread(measure, value) %>%
+    select(
+        var,
+        mean,
+        sd,
+        median,
+        q25,
+        q75
+    ) %>%
+    mutate_at(
+        "var", 
+        str_replace_all,
+        pattern = c(
+            "age" = "Age",
+            "length.stay" = "Length of stay"
+        )
+    ) %>%
+    knitr::kable(
+        caption = "Demographics of patients receiving IV opioids",
+        digits = 1,
+        col.names = c(
+            "Variable",
+            "Mean",
+            "Std Dev",
+            "Median",
+            "25th",
+            "75th"
+        )
+    ) %>%
+    kable_styling()
+```
+
+```{r}
+data_demog %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    mutate_at(
+        c("race", "gender", "disposition"), 
+        funs(coalesce(., "Unknown"))
+    ) %>%
+    mutate(
+        dispo.group = case_when(
+            str_detect(disposition, "Hospice|Deceased") ~ "Deceased / Hospice",
+            str_detect(disposition, "Home|Left") ~ "Home",
+            str_detect(disposition, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
+        )
+    ) %>%
+    add_count(gender) %>%
+    add_count(race) %>%
+    add_count(dispo.group) %>%
+    unite(gender, gender, n) %>%
+    unite(race, race, nn) %>%
+    unite(dispo.group, dispo.group, nnn) %>%
+    select(
+        gender,
+        race,
+        dispo.group
+    ) %>%
+    gather(measure, value) %>%
+    distinct() %>%
+    separate(value, c("var", "value"), sep = "_") %>%
+    mutate_at("value", as.numeric) %>%
+    mutate(pct = value / nrow(sickle_cell) * 100) %>%
+    arrange(measure, desc(value)) %>%
+    select(-measure) %>%
+    knitr::kable(
+        format = "html",
+        digits = 0,
+        # caption = "Demographics of patients receiving IV opioids",
+        col.names = c(
+            "Measure",
+            "N",
+            "(%)"
+        )
+    ) %>%
+    kable_styling(full_width = TRUE) %>%
+    group_rows("Disposition", 1, 3) %>%
+    group_rows("Gender", 4, 5) %>%
+    group_rows("Race", 6, 9)
+
+```
+
+```{r}
+cont_cols <- c(
+    "Variable", 
+    "Median", 
+    "25th", 
+    "75th",
+    "Median", 
+    "25th", 
+    "75th",
+    "p-value", 
+    "low", 
+    "high"
+)
+
+cat_cols <- c("Variable", "n", "%", "n", "%", "p-value")
+
+make_header <- function(df, len = 3, ci = TRUE) {
+    cnt <- count(df, pca)
+
+    x <- paste("n =", cnt$n[[1]])
+    y <- paste("n =", cnt$n[[2]])
+    z <- "95% CI"
+    
+    hdr <- c(" " = 1, x = len, y = len, " " = 1)
+    nm <- c(" ", x, y, " ")
+    
+    if (ci) {
+        hdr <- c(hdr, z = 2)
+        names(hdr) <- c(nm, z)
+    } else {
+        names(hdr) <- nm
+    }    
+    
+    hdr
+}
+
+hdr_year <- function(len = 3, ci = TRUE) {
+    x <- c(" ", "No PCA" = len, "PCA" = len, " ")
+    if (ci) x <- c(x, " ", " ")
+    
+    x
+}
+
+p_cont <- function(df, ...) {
+    grp <- quos(...)
+    var_name <- sym("var_name")
+    
+    df %>%
+        gather("var_name", "value", !!!grp) %>%
+        group_by(!!var_name) %>%
+        do(
+            tidy(
+                wilcox.test(
+                    value ~ pca, 
+                    data = ., 
+                    conf.int = TRUE
+                )
+            )
+        ) %>%
+        select(
+            !!var_name, 
+            !!sym("p.value"), 
+            !!sym("conf.low"),
+            !!sym("conf.high")
+        ) %>%
+        ungroup()
+}
+
+p_cat <- function(df, ...) {
+    grp <- quos(...)
+    var_name <- sym("var_name")
+
+    df %>%
+        select(!!sym("pca"), !!!grp) %>%
+        gather("var_name", "value", !!!grp) %>%
+        group_by(!!var_name) %>%
+        do(
+            tidy(
+                chisq.test(
+                    .$pca, .$value
+                )
+            )
+        ) %>%
+        select(
+            !!var_name, 
+            !!sym("p.value")
+        )
+}
+
+# might break if only one continuous variable due to var_name becoming NA
+df_cont <- function(df, p, ...) {
+    grp <- quos(...)
+    
+    var_name <- sym("var_name")
+    measure <- sym("measure")
+    result <- sym("result")
+    year <- sym("pca")
+    all_measures <- sym("all_measures")
+
+    df %>%
+        group_by(!!year) %>%
+        summarize_at(
+            vars(!!!grp), 
+            funs(
+                median, 
+                q25 = quantile(., 0.25), 
+                q75 = quantile(., 0.75)
+            ), 
+            na.rm = TRUE
+        ) %>%
+        gather(!!var_name, !!result, -!!year) %>%
+        separate(
+            !!var_name, 
+            c("var_name", "measure"), 
+            # c(!!var_name, !!measure), 
+            sep = "_",
+            fill = "left"
+        ) %>%
+        spread(!!measure, !!result) %>%
+        unite(
+            !!all_measures, 
+            !!sym("median"), 
+            !!sym("q25"), 
+            !!sym("q75")
+        ) %>%
+        spread(!!year, !!all_measures) %>%
+        separate(
+            `TRUE`, 
+            c("median_1", "q25_1", "q75_1"),
+            sep = "_"
+        ) %>%
+        separate(
+            `FALSE`, 
+            c("median_2", "q25_2", "q75_2"), 
+            sep = "_"
+        ) %>%
+        left_join(p, by = "var_name") %>%
+        mutate_at(
+            c(
+                "median_1", 
+                "q25_1", 
+                "q75_1", 
+                "median_2",
+                "q25_2", 
+                "q75_2"
+            ), 
+            as.numeric
+        )
+    
+}
+
+df_cat_logical <- function(df, p, ...) {
+    grp <- quos(...)
+
+    year <- sym("pca")
+    n_col <- sym("n")
+    var_name <- sym("var_name")
+    result <- sym("result")
+    result_pct <- sym("result_pct")
+
+    df %>%
+        ungroup() %>%
+        select(!!year, !!!grp) %>%
+        add_count(!!year) %>%
+        group_by(!!year, !!n_col) %>%
+        summarize_if(is.logical, sum, na.rm = TRUE) %>%
+        gather(!!var_name, !!result, -!!year, -!!n_col) %>%
+        mutate(!!"pct" := !!result / !!n_col * 100) %>%
+        select(-!!n_col) %>%
+        unite(!!result_pct, !!result, !!sym("pct")) %>%
+        spread(!!year, !!result_pct) %>%
+        separate(`TRUE`, c("result1", "pct1"), sep = "_") %>%
+        separate(`FALSE`, c("result2", "pct2"), sep = "_") %>%
+        mutate_at(
+            c("result1", "pct1", "result2", "pct2"), 
+            as.numeric
+        ) %>%
+        left_join(p, by = "var_name")
+}
+
+df_cat_char <- function(df, ...) {
+    x <- quos(...)
+
+    year <- sym("pca")
+    n_col <- sym("n")
+    var_name <- sym("var_name")
+    result <- sym("result")
+    result_pct <- sym("result_pct")
+
+    df %>%
+        ungroup() %>%
+        select(!!sym("millennium.id"), !!year, !!!x) %>%
+        add_count(!!year) %>%
+        mutate(!!"val" := TRUE) %>%
+        spread(!!x[[1]], !!sym("val")) %>%
+        group_by(!!year, !!n_col) %>%
+        summarize_if(is.logical, sum, na.rm = TRUE) %>%
+        gather(!!var_name, !!result, -!!year, -!!n_col) %>%
+        mutate(!!"pct" := !!result / !!n_col * 100) %>%
+        select(-!!n_col) %>%
+        unite(!!result_pct, !!result, !!sym("pct")) %>%
+        spread(!!year, !!result_pct) %>%
+        separate(`TRUE`, c("result1", "pct1"), sep = "_") %>%
+        separate(`FALSE`, c("result2", "pct2"), sep = "_") %>%
+        mutate_at(
+            c("result1", "pct1", "result2", "pct2"), 
+            as.numeric
+        ) %>%
+        arrange(desc(!!sym("pct1")))
+}
+
+
+make_cont_table <- function(df, var_name, caption, ...) {
+    vars <- quos(...)
+    
+    p_df <- df %>%
+        p_cont(...)
+    
+    df %>%
+        df_cont(p = p_df, ...) %>%
+        mutate_at(
+            "var_name", 
+            str_replace_all, 
+            pattern = var_name
+        ) %>%
+        knitr::kable(
+            digits = c(rep(1, 7), rep(3, 3)), 
+            caption = caption,
+            booktabs = TRUE,
+            col.names = cont_cols
+        ) %>%
+        kable_styling() %>%
+        add_header_above(make_header(df)) %>%
+        add_header_above(hdr_year())    
+}
+
+make_cat_table <- function(df, var_name, caption, ...) {
+    vars <- quos(...)
+    
+    p_df <- p_cat(df, ...)
+    
+    df %>%
+        df_cat_logical(p = p_df, ...) %>%
+        mutate_at(
+            "var_name", 
+            str_replace_all, 
+            pattern = var_name
+        ) %>%
+        knitr::kable(
+            digits = c(rep(0, 5), 3),
+            booktabs = TRUE,
+            caption = caption,
+            col.names = cat_cols
+        ) %>%
+        kable_styling() %>%
+        add_header_above(
+            header = make_header(df, 2, ci = FALSE)
+        ) %>%
+        add_header_above(hdr_year(2, FALSE))
+}
+
+make_cat_char_table <- function(df, var_name, caption, ...) {
+    p_df <- p_cat(df, ...)
+    
+    tbl <- df_cat_char(df, ...)
+
+    p_df %>%
+        bind_rows(tbl) %>%
+        select(-!!sym("p.value"), everything()) %>%
+        ungroup() %>%
+        mutate_at(
+            "var_name",
+            str_replace_all,
+            pattern = var_name
+        ) %>%
+        knitr::kable(
+            digits = c(rep(0, 5), 3),
+            booktabs = TRUE,
+            caption = caption,
+            col.names = cat_cols
+        ) %>%
+        kable_styling() %>%
+        add_header_above(
+            header = make_header(df, 2, ci = FALSE)
+        ) %>%
+        add_header_above(hdr_year(2, FALSE))
+        # group_rows("", 2, nrow(tbl) + 1, label_row_css = "")
+    
+}
+```
+
+
+```{r}
+df_pca <- data_pca %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(pca = TRUE)
+
+varnm <- c(
+    "age" = "Age (years)",
+    "length.stay" = "Length of Stay (days)"
+)
+
+cap <- "Demographics in sickle cell patients receiving a PCA compared with those who did not"
+
+data_demog %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    mutate(pts = TRUE) %>%
+    left_join(df_pca, by = "millennium.id") %>%
+    mutate_at("pca", funs(coalesce(., FALSE))) %>%
+    make_cont_table(
+        var_name = varnm, 
+        caption = cap, 
+        age, length.stay
+    )
+
+```
+
+```{r}
+varnm <- c(
+    "race" = "Race",
+    "gender" = "Gender",
+    "dispo.group" = "Disposition"
+)
+
+cap <- ""
+
+df_sickle_cat <- data_demog %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    left_join(df_pca, by = "millennium.id") %>%
+    mutate_at("pca", funs(coalesce(., FALSE))) %>%
+    mutate_at(
+        c("race", "gender", "disposition"), 
+        funs(coalesce(., "Unknown"))
+    ) %>%
+    mutate(
+        dispo.group = case_when(
+            str_detect(disposition, "Hospice|Deceased") ~ "Deceased / Hospice",
+            str_detect(disposition, "Home|Left") ~ "Home",
+            str_detect(disposition, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
+        )
+    ) 
+
+df_sickle_cat %>%
+    make_cat_char_table(
+        var_name = varnm,
+        caption = cap,
+        dispo.group
+    )
+```
+
+```{r}
+df_sickle_cat %>%
+    make_cat_char_table(
+        var_name = varnm,
+        caption = cap,
+        gender
+    )
+```
+
+```{r}
+df_sickle_cat %>%
+    make_cat_char_table(
+        var_name = varnm,
+        caption = cap,
+        race
+    )
+```
+
+
+
+```{r, fig.cap="Among patients who received IV opioids, this is the percent who received other pain therapies. Here, PO is determined by administration of other PO medications within 4 hours before or after the IV opioid was given, multi-modal therapy administration within 8 hours of IV opioid use, and PCA use charted within 12 hours of IV opioid administration."}
+tmp_opioids <- data_meds_opioids %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    filter(
+        str_detect(route, "IV"),
+        med.location %in% cullen
+    ) %>%
+    distinct(millennium.id, med.datetime) %>%
+    rename(iv.datetime = med.datetime)
+
+tmp_po <- data_meds_po %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
+    filter(
+        med.datetime >= iv.datetime - hours(4),
+        med.datetime <= iv.datetime + hours(4),
+        med.location %in% cullen
+    ) %>%
+    distinct(millennium.id) %>%
+    mutate(PO = TRUE)
+
+tmp_pca <- data_pca %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
+    filter(
+        event.datetime >= iv.datetime - hours(12),
+        event.datetime <= iv.datetime + hours(12)
+    ) %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(PCA = TRUE)
+
+tmp_modal <- data_meds_modal %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    left_join(tmp_opioids, by = "millennium.id") %>%
+    filter(
+        med.datetime >= iv.datetime - hours(8),
+        med.datetime <= iv.datetime + hours(8),
+        med.location %in% cullen
+    ) %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(modal = TRUE) 
+
+sickle_cell %>%
+    left_join(tmp_po, by = "millennium.id") %>%
+    left_join(tmp_pca, by = "millennium.id") %>%
+    left_join(tmp_modal, by = "millennium.id") %>%
+    ungroup() %>%
+    summarize_at(c("PO", "PCA", "modal"), sum, na.rm = TRUE) %>%
+    mutate_at(c("PO", "PCA", "modal"), funs(. / nrow(sickle_cell) * 100)) %>%
+    rename(`Multi-modal` = modal) %>%
+    gather(key, value) %>%
+    arrange(desc(value)) %>%
+    mutate_at("key", as_factor) %>%
+    ggplot(aes(x = key, y = value)) +
+    geom_bar(stat = "identity") +
+    xlab("Pain therapy") +
+    ylab("IV Opioid Patients (%)") +
+    coord_cartesian(ylim = c(0, 100)) +
+    theme_bg(xticks = FALSE)
+
+```
+
+```{r, fig.cap="Timeline of pain medication administration over first 10 days of hospitalization among patients with sickle cell DRG. Note, that this includes all pain medications from the time of arrival in the ED."}
+df1 <- df %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    mutate_at("time.admit", round, digits = 0) %>%
+    distinct(millennium.id, type, time.admit, .keep_all = TRUE) %>%
+    arrange(type)
+
+p1 <- df1 %>%
+    semi_join(data_pca, by = "millennium.id") %>%
+    plot_ly(       
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6,
+        legendgroup = ~type
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 1
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Days from admission (PCA)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+p2 <- df1 %>%
+    anti_join(data_pca, by = "millennium.id") %>%
+    plot_ly(       
+        x = ~time.admit, 
+        color = ~type,
+        colors = brewer.pal(4, "Paired"),
+        alpha = 0.6,
+        legendgroup = ~type,
+        showlegend = FALSE
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 10,
+            size = 1
+        )
+    ) %>%
+    layout(
+        barmode = "overlay",
+        xaxis = list(
+            title = "Days from admission (No PCA)",
+            tick0 = 0,
+            dtick = 2
+        ),
+        yaxis = list(title = "Patients")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+# pca vs no pca (timeline, los)
+# number of iv doses
+
+```
+
+```{r, fig.cap="Number of patients receiving each number of doses of pain medications, among sickle cell patients receiving a PCA compared with those who did not."}
+df2 <- df %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    mutate_at("time.admit", round, digits = 0) %>%
+    count(millennium.id, type) %>%
+    arrange(type)
+
+p1 <- df2 %>%
+    semi_join(data_pca, by = "millennium.id") %>%
+    plot_ly(        
+        x = ~n, 
+        color = ~type,
+        legendgroup = ~type,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 100,
+            size = 5
+        )
+    ) %>%
+    layout(
+        xaxis = list(title = "Number of doses (PCA)"),
+        yaxis = list(title = "Number of patients")
+    )
+
+p2 <- df2 %>%
+    anti_join(data_pca, by = "millennium.id") %>%
+    plot_ly(        
+        x = ~n, 
+        color = ~type,
+        legendgroup = ~type,
+        showlegend = FALSE,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_histogram(
+        autobinx = FALSE,
+        xbins = list(
+            start = 0,
+            end = 100,
+            size = 5
+        )
+    ) %>%
+    layout(
+        xaxis = list(title = "Number of doses (No PCA)"),
+        yaxis = list(title = "Number of patients")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+
+```
+
+```{r mme}
+tmp_mme <- data_meds_opioids %>%
+    semi_join(sickle_cell, by = "millennium.id") %>%
+    filter(
+        !str_detect(med, "opium"),
+        med != "tramadol",
+        is.na(event.tag)
+    ) %>%
+    left_join(
+        data_orders, 
+        by = c("millennium.id", "orig.order.id" = "order.id")
+    ) %>%
+    calc_morph_eq() %>%
+    mutate(
+        type = if_else(
+            str_detect(route, "IV"),
+            "Opioid IV",
+            "Opioid PO"
+        )
+    )
+
+pts_pca <- data_pca %>%
+    ungroup() %>%
+    distinct(millennium.id) %>%
+    mutate(pca = TRUE)
+
+tmp_pca_mme <- data_pca %>%
+    mutate_at("pca.drug", str_to_lower) %>%
+    mutate(
+        mme.iv = case_when(
+            str_detect(pca.drug, "hydromorphone") ~ total.dose * 6.7,
+            str_detect(pca.drug, "fentanyl") ~ total.dose * 0.1,
+            TRUE ~ total.dose
+        )
+    ) %>%
+    select(millennium.id, med.datetime = event.datetime, mme.iv) %>%
+    mutate(type = "PCA")
+
+df_mme <- tmp_mme %>%
+    bind_rows(tmp_pca_mme) %>%
+    left_join(data_encounters, by = "millennium.id") %>%
+    mutate(
+        time.admit = difftime(
+            med.datetime,
+            admit.datetime,
+            units = "days"
+        )
+    ) %>%
+    arrange(millennium.id, med.datetime) %>%
+    group_by(millennium.id) %>%
+    mutate(mme.iv.cum = cumsum(mme.iv)) %>%
+    left_join(pts_pca, by = "millennium.id") %>%
+    mutate_at(
+        "pca", 
+        funs(
+            if_else(., "PCA", "No PCA", "No PCA")
+        )
+    ) %>%
+    left_join(data_demog, by = "millennium.id") %>%
+    mutate_at("time.admit", as.numeric) 
+
+```
+
+```{r, fig.cap="Cummulative MME over the first 10 days of admission by route among sickle cell patients with and without a PCA, during the first 10 days of admission", eval=FALSE}
+df_mme %>%
+    # filter(length.stay <= 10) %>%
+    filter(time.admit <= 10) %>%
+    ggplot(aes(x = time.admit, y = mme.iv.cum)) +
+    geom_point(aes(color = type), shape = 1) +
+    xlab("Time from admission (days)") +
+    ylab("Amount of opiod (MME)") +
+    scale_color_discrete("Route") +
+    facet_wrap(~ pca) +
+    theme_bg()
+```
+
+```{r, fig.cap="Cummulative MME over the first 10 days of admission by route among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df2_mme <- df_mme %>%
+    filter(time.admit <= 10) %>%
+    mutate_at(
+        "type", 
+        factor, 
+        levels = c("Multi-modal", "Opioid IV", "Opioid PO", "PCA")
+    )
+
+p1 <- df2_mme %>%
+    filter(pca == "PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (PCA)"),
+        yaxis = list(title = "Total Opiod (MME)")
+    )
+
+p2 <- df2_mme %>%
+    filter(pca == "No PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        showlegend = FALSE,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (No PCA)"),
+        yaxis = list(title = "Total Opioid (MME)")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+
+```
+
+```{r, fig.cap="Cummulative MME, excluding PCA doses, over the first 10 days of admission by route among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df_mme_alt <- df2_mme %>%
+    filter(type != "PCA") %>%
+    mutate(mme.iv.cum = cumsum(mme.iv)) %>%
+    filter(time.admit <= 10)
+
+p1 <- df_mme_alt %>%
+    filter(pca == "PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (PCA)"),
+        yaxis = list(title = "Total Opiod (MME)")
+    )
+
+p2 <- df_mme_alt %>%
+    filter(pca == "No PCA") %>%
+    plot_ly(        
+        x = ~time.admit, 
+        y = ~mme.iv.cum,
+        color = ~type,
+        legendgroup = ~type,
+        showlegend = FALSE,
+        colors = brewer.pal(4, "Paired")
+    ) %>%
+    add_markers(marker = list(symbol = "circle-open")) %>%
+    layout(
+        xaxis = list(title = "Days from admit (No PCA)"),
+        yaxis = list(title = "Total Opioid (MME)")
+    )
+
+subplot(p1, p2, nrows = 1, shareX = TRUE, shareY = TRUE)
+
+```
+
+
+```{r, fig.cap="Total amount of opioids, in MME, received by route among sickle cell patients with and without a PCA, during the first 10 days of admission", eval=FALSE}
+df_mme %>%
+    # filter(length.stay <= 10) %>%
+    filter(time.admit <= 10) %>%
+    group_by(millennium.id, pca, type, length.stay) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    ungroup() %>%
+    mutate(mme.iv.day = mme.iv / length.stay) %>%
+    ggplot(aes(x = pca, y = mme.iv.day)) +
+    geom_boxplot(aes(color = type)) +
+     xlab("PCA Use") +
+    ylab("Amount of opiod (MME)") +
+    scale_color_discrete("Route") +
+    theme_bg()
+```
+
+```{r, fig.cap="Distribution of the amount of opioids per day, by route, among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df_mme %>%
+    filter(time.admit <= 10) %>%
+    group_by(millennium.id, pca, type, length.stay) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    ungroup() %>%
+    mutate(mme.iv.day = mme.iv / length.stay) %>%
+    plot_ly(        
+        x = ~type, 
+        y = ~mme.iv.day,
+        color = ~pca
+    ) %>%
+    add_boxplot() %>%
+    layout(
+        xaxis = list(title = "Route"),
+        yaxis = list(title = "Opioid per day (MME)"),
+        boxmode = "group"
+    )
+
+```
+
+```{r, fig.cap="Total amount of opioids per day among sickle cell patients with and without a PCA, during the first 10 days of admission"}
+df_mme %>%
+    filter(time.admit <= 10) %>%
+    group_by(millennium.id, pca, length.stay) %>%
+    summarize_at("mme.iv", sum, na.rm = TRUE) %>%
+    group_by(pca) %>%
+    mutate(mme.iv.day = mme.iv / length.stay) %>%
+    plot_ly(        
+        x = ~pca, 
+        y = ~mme.iv.day
+    ) %>%
+    add_boxplot() %>%
+    layout(
+        xaxis = list(title = "Route"),
+        yaxis = list(title = "Opioid per day (MME)"),
+        boxmode = "group"
+    )
+
+```
+
+```{r, fig.cap="Breakdown of when doses of each type of therapy were administered relative to admission among patients receiving IV opioids", eval=FALSE}
+medians <- df %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    group_by(type) %>%
+    summarize_at("time.admit", median) %>%
+    arrange(time.admit)
+
+df %>%
+    semi_join(pts_iv, by = "millennium.id") %>%
+    mutate_at("type", factor, levels = medians$type) %>%
+    mutate_at("type", fct_rev) %>%
+    ggplot(aes(x = type, y = time.admit)) +
+    geom_boxplot() +
+    xlab("Medication type") +
+    ylab("Time from admission (hours)") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, eval=FALSE}
+df %>%
+    ggplot(aes(x = time.admit, color = type)) +
+    geom_freqpoly(binwidth = 0.5) +
+    scale_x_continuous(
+        "Time from admission (days)", 
+        breaks = seq(0, 10, 2)
+    ) +
+    ylab("Number of patients") +
+    scale_color_brewer(NULL, palette = "Paired") +
+    coord_cartesian(xlim = c(0, 10)) +
+    theme_bg()
+```
+
+
+```{r, eval=FALSE}
+set.seed(77123)
+samp <- df %>%
+    semi_join(tmp_pca, by = "millennium.id") %>%
+    distinct(millennium.id) %>%
+    sample_n(20)
+
+df %>%
+    semi_join(samp, by = "millennium.id") %>%
+    group_by(millennium.id, type) %>%
+    summarize_at("med.datetime", funs(first, last)) %>%
+    vistime(
+        start = "first",
+        end = "last",
+        events = "type",
+        groups = "millennium.id",
+        showLabels = FALSE
+    )
+```
+
