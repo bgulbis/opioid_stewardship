@@ -43,7 +43,6 @@ FROM
 	MED_ADMIN_EVENT,
 	NOMENCLATURE,
 	ORDERS,
-	ORDERS TEMPLATE_ORDERS,
 	PI_THERA_CLASS_VIEW
 WHERE
     NOMENCLATURE.SOURCE_IDENTIFIER IN ('D57', 'D57.1', 'D57.2', 'D57.3', 'D57.4', 'D57.8')
@@ -53,8 +52,12 @@ WHERE
         AND DIAGNOSIS.ACTIVE_IND = 1
     )
     AND PI_THERA_CLASS_VIEW.DRUG_CAT IN (
-		'narcotic analgesic combinations',
-		'narcotic analgesics'
+        'cox-2 inhibitors',
+        'gamma-aminobutyric acid analogs',
+        'miscellaneous analgesics',
+        'narcotic analgesic combinations',
+        'narcotic analgesics',
+        'nonsteroidal anti-inflammatory agents'
 	)
 	AND PI_THERA_CLASS_VIEW.DRUG_CAT_CD = CV_ORDER.CODE_VALUE
 	AND CV_ORDER.CODE_SET = 200
