@@ -17,6 +17,7 @@ options(
 
 ```{r}
 library(tidyverse)
+library(kableExtra)
 
 dir_data <- "../data/tidy/sickle_cell"
 tz_locale <- locale(tz = "US/Central")
@@ -34,6 +35,101 @@ get_data <- function(path, pattern) {
 data_pts <- get_data(dir_data, "patients") 
 data_meds <- get_data(dir_data, "narcotics")
 data_pca <- get_data(dir_data, "pca")
+
+```
+
+```{r}
+data_pts %>%
+    summarize_at(
+        c("age", "los"),
+        funs(
+            mean,
+            sd, 
+            median,
+            q25 = quantile(., 0.25), 
+            q75 = quantile(., 0.75)
+        ),
+        na.rm = TRUE
+    ) %>%
+    gather(key, value) %>%
+    separate(key, c("var", "measure"), sep = "_") %>%
+    spread(measure, value) %>%
+    select(
+        var,
+        mean,
+        sd,
+        median,
+        q25,
+        q75
+    ) %>%
+    mutate_at(
+        "var", 
+        str_replace_all,
+        pattern = c(
+            "age" = "Age (years)",
+            "los" = "Length of stay (days)"
+        )
+    ) %>%
+    knitr::kable(
+        caption = "Demographics of sickle cell patients",
+        digits = 1,
+        col.names = c(
+            "Variable",
+            "Mean",
+            "Std Dev",
+            "Median",
+            "25th",
+            "75th"
+        )
+    ) %>%
+    kable_styling()
+```
+
+```{r}
+data_pts %>%
+    mutate_at(
+        c("race", "sex", "dispo_dc"), 
+        funs(coalesce(., "Unknown"))
+    ) %>%
+    mutate(
+        dispo_group = case_when(
+            str_detect(dispo_dc, "Hospice|Deceased") ~ "Deceased / Hospice",
+            str_detect(dispo_dc, "Home|Left|Elopement") ~ "Home",
+            str_detect(dispo_dc, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
+        )
+    ) %>%
+    add_count(sex) %>%
+    unite(sex, sex, n) %>%
+    add_count(race) %>%
+    unite(race, race, n) %>%
+    add_count(dispo_group) %>%
+    unite(dispo_group, dispo_group, n) %>%
+    select(
+        sex,
+        race,
+        dispo_group
+    ) %>%
+    gather(measure, value) %>%
+    distinct() %>%
+    separate(value, c("var", "value"), sep = "_") %>%
+    mutate_at("value", as.numeric) %>%
+    mutate(pct = value / nrow(data_pts) * 100) %>%
+    arrange(measure, desc(value)) %>%
+    select(-measure) %>%
+    knitr::kable(
+        format = "html",
+        digits = 0,
+        # caption = "Demographics of sickle cell patients",
+        col.names = c(
+            "Measure",
+            "N",
+            "(%)"
+        )
+    ) %>%
+    kable_styling(full_width = TRUE) %>%
+    group_rows("Disposition", 1, 1) %>%
+    group_rows("Race", 2, 4) %>%
+    group_rows("Gender", 5, 6) 
 
 ```
 
