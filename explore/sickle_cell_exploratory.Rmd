@@ -1,0 +1,39 @@
+---
+title: "Sickle Cell Patients"
+author: "Brian Gulbis, PharmD, BCPS"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+    html_document:
+        code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(
+    knitr.table.format = "html",
+    knitr.kable.NA = ""
+)
+```
+
+```{r}
+library(tidyverse)
+
+dir_data <- "../data/tidy/sickle_cell"
+tz_locale <- locale(tz = "US/Central")
+
+get_data <- function(path, pattern) {
+    path %>%
+    list.files(pattern, full.names = TRUE) %>%
+    purrr::map_df(
+        readr::read_csv,
+        locale = tz_locale
+    ) %>%
+    rename_all(stringr::str_to_lower)
+}
+
+data_pts <- get_data(dir_data, "patients") 
+data_meds <- get_data(dir_data, "narcotics")
+data_pca <- get_data(dir_data, "pca")
+
+```
+
