@@ -23,8 +23,12 @@ dir_data <- "../data/tidy/sickle_cell"
 tz_locale <- locale(tz = "US/Central")
 
 get_data <- function(path, pattern) {
-    path %>%
-    list.files(pattern, full.names = TRUE) %>%
+    f <- list.files(path, pattern, full.names = TRUE)
+    
+    n <- f %>% 
+        purrr::map_int(~ nrow(data.table::fread(.x, select = 1L))) 
+
+    f[n > 0] %>%
     purrr::map_df(
         readr::read_csv,
         locale = tz_locale
@@ -86,9 +90,9 @@ data_pts %>%
 ```
 
 ```{r}
-data_pts %>%
+df <- data_pts %>%
     mutate_at(
-        c("race", "sex", "dispo_dc"), 
+        c("race", "sex", "dispo_dc", "med_service_dc", "encounter_type"), 
         funs(coalesce(., "Unknown"))
     ) %>%
     mutate(
@@ -96,18 +100,44 @@ data_pts %>%
             str_detect(dispo_dc, "Hospice|Deceased") ~ "Deceased / Hospice",
             str_detect(dispo_dc, "Home|Left|Elopement") ~ "Home",
             str_detect(dispo_dc, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
-        )
-    ) %>%
+        ),
+        reason_admit = if_else(priority == 1, "Yes", "No")
+    )
+
+df_sex <- count(df, sex)
+df_race <- count(df, race)
+df_dispo <- count(df, dispo_group)
+df_medsvc <- count(df, med_service_dc)
+df_encntr <- count(df, encounter_type)
+df_primary <- count(df, reason_admit)
+
+n_sex <- nrow(df_sex)
+n_race <- nrow(df_race)
+n_dispo <- nrow(df_dispo)
+n_medsvc <- nrow(df_medsvc)
+n_encntr <- nrow(df_encntr)
+n_primary <- nrow(df_primary)
+
+df %>%
+    add_count(encounter_type) %>%
+    unite(encounter_type, encounter_type, n) %>%
     add_count(sex) %>%
     unite(sex, sex, n) %>%
     add_count(race) %>%
     unite(race, race, n) %>%
     add_count(dispo_group) %>%
     unite(dispo_group, dispo_group, n) %>%
+    add_count(med_service_dc) %>%
+    unite(med_service_dc, med_service_dc, n) %>%
+    add_count(reason_admit) %>%
+    unite(reason_admit, reason_admit, n) %>%
     select(
+        encounter_type,
         sex,
         race,
-        dispo_group
+        dispo_group,
+        med_service_dc,
+        reason_admit
     ) %>%
     gather(measure, value) %>%
     distinct() %>%
@@ -127,9 +157,53 @@ data_pts %>%
         )
     ) %>%
     kable_styling(full_width = TRUE) %>%
-    group_rows("Disposition", 1, 1) %>%
-    group_rows("Race", 2, 4) %>%
-    group_rows("Gender", 5, 6) 
+    group_rows(
+        group_label = "Disposition", 
+        start_row = 1, 
+        end_row = n_dispo
+    ) %>%
+    group_rows(
+        group_label = "Encounter Type", 
+        start_row = 1 + n_dispo, 
+        end_row = n_dispo + n_encntr
+    ) %>%
+    group_rows(
+        group_label = "Discharge Service", 
+        start_row = 1 + n_dispo + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc
+    ) %>%
+    group_rows(
+        group_label = "Race", 
+        start_row = 1 + n_dispo + n_medsvc + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race
+    ) %>%
+    group_rows(
+        group_label = "Primary ICD Code", 
+        start_row = 1 + n_dispo + n_encntr + n_medsvc + n_race, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race + n_primary
+    ) %>%
+    group_rows(
+        group_label = "Sex", 
+        start_row = 1 + n_dispo + n_encntr + n_medsvc + n_race + n_primary, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race + n_primary + n_sex
+    ) 
 
+```
+
+```{r, eval=FALSE}
+df_pca <- data_pca %>%
+    mutate(pca = TRUE) %>%
+    distinct(encounter_id, pca)
+
+df_meds <- data_meds %>%
+    mutate(med = TRUE) %>%
+    distinct(encounter_id, med)
+
+x <- data_pts %>%
+    left_join(df_meds, by = "encounter_id") %>%
+    left_join(df_pca, by = "encounter_id")
+
+y <- anti_join(data_pca, data_pts, by = "encounter_id") %>%
+    distinct(encounter_id)
 ```
 
