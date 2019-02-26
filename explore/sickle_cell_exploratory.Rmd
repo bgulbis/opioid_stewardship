@@ -364,7 +364,44 @@ df_scc %>%
 ```
 
 ```{r}
+timing_opioids <- df_opioids %>%
+    select(
+        encounter_id, 
+        event_time_admit, 
+        med,
+        route,
+        nurse_unit:attending
+    ) %>%
+    mutate(
+        med_type = case_when(
+            route == "PO" ~ "opioid_po",
+            route == "TOP" ~ "opioid_patch",
+            TRUE ~ "opioid_iv"
+        )
+    )
 
+timing_other <- df_non_opioids %>%
+    select(
+        encounter_id, 
+        event_time_admit, 
+        med,
+        route,
+        nurse_unit:attending
+    ) %>%
+    mutate(med_type = "other")
+
+timing_pca <- df_pca %>%
+    filter(event == "PCA Drug") %>%
+    select(
+        encounter_id, 
+        event_time_admit, 
+        med = result,
+        nurse_unit:attending
+    ) %>%
+    mutate(med_type = "pca")
+
+df_timing <- bind_rows(timing_opioids, timing_other, timing_pca) %>%
+    arrange(encounter_id, event_time_admit)
 ```
 
 
