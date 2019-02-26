@@ -216,6 +216,14 @@ df_scc <- data_pts %>%
 df_meds <- semi_join(data_meds, df_scc, by = "encounter_id")
 df_pca <- semi_join(data_pca, df_scc, by = "encounter_id")
 
+df_opioids <- df_meds %>%
+    filter(
+        drug_class %in% c("narcotic analgesics", "narcotic analgesic combinations"),
+        med != "tramadol"
+    ) 
+
+df_non_opioids <- anti_join(df_meds, df_opioids, by = "event_id")
+
 ```
 
 ```{r}
@@ -356,14 +364,7 @@ df_scc %>%
 ```
 
 ```{r}
-opioids <- edwr::med_lookup(
-    c(
-        "narcotic analgesics", 
-        "narcotic analgesic combinations"
-    )
-) %>%
-    mutate_at("med.name", str_to_lower) %>%
-    filter(med.name != "tramadol")
+
 ```
 
 
