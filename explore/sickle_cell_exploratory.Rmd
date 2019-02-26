@@ -37,63 +37,33 @@ get_data <- function(path, pattern) {
 }
 
 data_pts <- get_data(dir_data, "patients") 
-data_meds <- get_data(dir_data, "narcotics")
+data_meds <- get_data(dir_data, "narcotics") %>%
+    mutate_at("med", str_to_lower)
 data_pca <- get_data(dir_data, "pca")
 
 ```
 
-```{r}
-data_pts %>%
-    summarize_at(
-        c("age", "los"),
-        funs(
-            mean,
-            sd, 
-            median,
-            q25 = quantile(., 0.25), 
-            q75 = quantile(., 0.75)
-        ),
-        na.rm = TRUE
-    ) %>%
-    gather(key, value) %>%
-    separate(key, c("var", "measure"), sep = "_") %>%
-    spread(measure, value) %>%
-    select(
-        var,
-        mean,
-        sd,
-        median,
-        q25,
-        q75
-    ) %>%
-    mutate_at(
-        "var", 
-        str_replace_all,
-        pattern = c(
-            "age" = "Age (years)",
-            "los" = "Length of stay (days)"
-        )
-    ) %>%
-    knitr::kable(
-        caption = "Demographics of sickle cell patients",
-        digits = 1,
-        col.names = c(
-            "Variable",
-            "Mean",
-            "Std Dev",
-            "Median",
-            "25th",
-            "75th"
-        )
-    ) %>%
-    kable_styling()
+```{r test, eval=FALSE}
+data_icd <- get_data(dir_data, "patients_2019") 
+data_drg <- get_data(dir_data, "patients-drg")
+pts_drg <- distinct(data_drg, encounter_id)
+
+x <- semi_join(data_icd, data_drg, by = "encounter_id")
+y <- semi_join(data_drg, data_icd, by = "encounter_id") %>%
+    distinct(encounter_id)
+
+z <- data_icd %>%
+    distinct(encounter_id) %>%
+    full_join(pts_drg, by = "encounter_id") %>%
+    distinct(encounter_id) 
+
 ```
 
 ```{r}
 df <- data_pts %>%
     mutate_at(
         c("race", "sex", "dispo_dc", "med_service_dc", "encounter_type"), 
-        funs(coalesce(., "Unknown"))
+        list(~coalesce(., "Unknown"))
     ) %>%
     mutate(
         dispo_group = case_when(
@@ -149,7 +119,7 @@ df %>%
     knitr::kable(
         format = "html",
         digits = 0,
-        # caption = "Demographics of sickle cell patients",
+        caption = "Demographics for all patients with a sickle cell ICD-10-CM code",
         col.names = c(
             "Measure",
             "N",
@@ -189,6 +159,213 @@ df %>%
     ) 
 
 ```
+
+```{r}
+data_pts %>%
+    summarize_at(
+        c("age", "los"),
+        list(
+            ~mean,
+            ~sd, 
+            ~median,
+            q25 = ~quantile(., 0.25), 
+            q75 = ~quantile(., 0.75)
+        ),
+        na.rm = TRUE
+    ) %>%
+    gather(key, value) %>%
+    separate(key, c("var", "measure"), sep = "_") %>%
+    spread(measure, value) %>%
+    select(
+        var,
+        mean,
+        sd,
+        median,
+        q25,
+        q75
+    ) %>%
+    mutate_at(
+        "var", 
+        str_replace_all,
+        pattern = c(
+            "age" = "Age (years)",
+            "los" = "Length of stay (days)"
+        )
+    ) %>%
+    knitr::kable(
+        # caption = "Demographics for all patients with a sickle cell ICD-10-CM code",
+        digits = 1,
+        col.names = c(
+            "Variable",
+            "Mean",
+            "Std Dev",
+            "Median",
+            "25th",
+            "75th"
+        )
+    ) %>%
+    kable_styling()
+```
+
+## Patients with Sickle Cell as Primary ICD Code
+
+```{r}
+df_scc <- data_pts %>%
+    filter(priority == 1)
+
+df_meds <- semi_join(data_meds, df_scc, by = "encounter_id")
+df_pca <- semi_join(data_pca, df_scc, by = "encounter_id")
+
+```
+
+```{r}
+df <- df_scc %>%
+    mutate_at(
+        c("race", "sex", "dispo_dc", "med_service_dc", "encounter_type"), 
+        list(~coalesce(., "Unknown"))
+    ) %>%
+    mutate(
+        dispo_group = case_when(
+            str_detect(dispo_dc, "Hospice|Deceased") ~ "Deceased / Hospice",
+            str_detect(dispo_dc, "Home|Left|Elopement") ~ "Home",
+            str_detect(dispo_dc, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
+        )
+    )
+
+df_sex <- count(df, sex)
+df_race <- count(df, race)
+df_dispo <- count(df, dispo_group)
+df_medsvc <- count(df, med_service_dc)
+df_encntr <- count(df, encounter_type)
+
+n_sex <- nrow(df_sex)
+n_race <- nrow(df_race)
+n_dispo <- nrow(df_dispo)
+n_medsvc <- nrow(df_medsvc)
+n_encntr <- nrow(df_encntr)
+
+df %>%
+    add_count(encounter_type) %>%
+    unite(encounter_type, encounter_type, n) %>%
+    add_count(sex) %>%
+    unite(sex, sex, n) %>%
+    add_count(race) %>%
+    unite(race, race, n) %>%
+    add_count(dispo_group) %>%
+    unite(dispo_group, dispo_group, n) %>%
+    add_count(med_service_dc) %>%
+    unite(med_service_dc, med_service_dc, n) %>%
+    select(
+        encounter_type,
+        sex,
+        race,
+        dispo_group,
+        med_service_dc
+    ) %>%
+    gather(measure, value) %>%
+    distinct() %>%
+    separate(value, c("var", "value"), sep = "_") %>%
+    mutate_at("value", as.numeric) %>%
+    mutate(pct = value / nrow(df_scc) * 100) %>%
+    arrange(measure, desc(value)) %>%
+    select(-measure) %>%
+    knitr::kable(
+        format = "html",
+        digits = 0,
+        caption = "Demographics for patients with a primary sickle cell ICD-10-CM code",
+        col.names = c(
+            "Measure",
+            "N",
+            "(%)"
+        )
+    ) %>%
+    kable_styling(full_width = TRUE) %>%
+    group_rows(
+        group_label = "Disposition", 
+        start_row = 1, 
+        end_row = n_dispo
+    ) %>%
+    group_rows(
+        group_label = "Encounter Type", 
+        start_row = 1 + n_dispo, 
+        end_row = n_dispo + n_encntr
+    ) %>%
+    group_rows(
+        group_label = "Discharge Service", 
+        start_row = 1 + n_dispo + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc
+    ) %>%
+    group_rows(
+        group_label = "Race", 
+        start_row = 1 + n_dispo + n_medsvc + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race
+    ) %>%
+    group_rows(
+        group_label = "Sex", 
+        start_row = 1 + n_dispo + n_encntr + n_medsvc + n_race, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race + n_sex
+    ) 
+
+```
+
+```{r}
+df_scc %>%
+    summarize_at(
+        c("age", "los"),
+        list(
+            ~mean,
+            ~sd, 
+            ~median,
+            q25 = ~quantile(., 0.25), 
+            q75 = ~quantile(., 0.75)
+        ),
+        na.rm = TRUE
+    ) %>%
+    gather(key, value) %>%
+    separate(key, c("var", "measure"), sep = "_") %>%
+    spread(measure, value) %>%
+    select(
+        var,
+        mean,
+        sd,
+        median,
+        q25,
+        q75
+    ) %>%
+    mutate_at(
+        "var", 
+        str_replace_all,
+        pattern = c(
+            "age" = "Age (years)",
+            "los" = "Length of stay (days)"
+        )
+    ) %>%
+    knitr::kable(
+        # caption = "Demographics for all patients with a sickle cell ICD-10-CM code",
+        digits = 1,
+        col.names = c(
+            "Variable",
+            "Mean",
+            "Std Dev",
+            "Median",
+            "25th",
+            "75th"
+        )
+    ) %>%
+    kable_styling()
+```
+
+```{r}
+opioids <- edwr::med_lookup(
+    c(
+        "narcotic analgesics", 
+        "narcotic analgesic combinations"
+    )
+) %>%
+    mutate_at("med.name", str_to_lower) %>%
+    filter(med.name != "tramadol")
+```
+
 
 ```{r, eval=FALSE}
 df_pca <- data_pca %>%
