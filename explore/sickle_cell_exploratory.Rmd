@@ -208,6 +208,18 @@ data_pts %>%
     kable_styling()
 ```
 
+```{r}
+df_all_opioids <- data_meds %>%
+    filter(
+        drug_class %in% c("narcotic analgesics", "narcotic analgesic combinations"),
+        med != "tramadol"
+    ) 
+
+df_all_other <- anti_join(data_meds, df_all_opioids, by = "event_id")
+
+```
+
+
 ## Patients with Sickle Cell as Primary ICD Code
 
 ```{r}
@@ -415,13 +427,23 @@ df_timing <- bind_rows(timing_opioids, timing_other, timing_pca) %>%
     )
 
 df_first <- df_timing %>%
+    filter(facility == "HH HERMANN") %>%
     distinct(encounter_id, ed_unit, .keep_all = TRUE)
 
 df_first_type <- df_timing %>%
+    filter(facility == "HH HERMANN") %>%
     distinct(encounter_id, ed_unit, med_type, .keep_all = TRUE)
+
+df_first_n <- df_timing %>%
+    filter(
+        facility == "HH HERMANN",
+        !ed_unit
+    ) %>%
+    distinct(encounter_id)
 
 ```
 
+### Adult Patients
 
 ```{r}
 df_first %>%
@@ -434,6 +456,7 @@ df_first %>%
 ```{r}
 df_first_type %>%
     filter(!ed_unit) %>%
+    mutate_at("event_time_admit", list(~. * 24)) %>%
     ggplot(aes(x = med_type, y = event_time_admit)) +
     geom_boxplot() +
     theme_bg()
@@ -442,17 +465,64 @@ df_first_type %>%
 ```{r}
 df_first_type %>%
     filter(!ed_unit) %>%
-    ggplot(aes(x = med_type)) +
-    geom_bar() +
+    count(med_type, sort = TRUE) %>%
+    mutate(pct = (n / nrow(df_first_n)) * 100) %>%
+    mutate_at("med_type", fct_inorder) %>%
+    ggplot(aes(x = med_type, y = pct)) +
+    geom_col() +
     theme_bg()
 ```
 
-```{r}
+```{r, fig.cap="Time to first type of each pain med"}
 df_first_type %>%
     filter(!ed_unit) %>%
     mutate_at("event_time_admit", list(~. * 24)) %>%
     ggplot(aes(x = event_time_admit, color = med_type)) +
     geom_freqpoly(binwidth = 6) +
+    theme_bg()
+```
+
+```{r}
+df_timing %>%
+    filter(facility == "HH HERMANN") %>%
+    mutate_at("event_time_admit", list(~. * 24)) %>%
+    ggplot(aes(x = event_time_admit, color = med_type)) +
+    geom_freqpoly(binwidth = 6) +
+    theme_bg()
+```
+
+
+```{r, fig.cap="Attending for all adult SCC patients"}
+df_first %>%
+    filter(!ed_unit) %>%
+    count(attending, sort = TRUE) %>%
+    mutate_at("attending", fct_inorder) %>%
+    mutate_at("attending", fct_rev) %>%
+    ggplot(aes(x = attending, y = n)) +
+    geom_col() +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, fig.cap="Attending for SCC patients receiving PCA"}
+df_first_type %>%
+    filter(med_type == "pca") %>%
+    count(attending, sort = TRUE) %>%
+    mutate_at("attending", fct_inorder) %>%
+    mutate_at("attending", fct_rev) %>%
+    ggplot(aes(x = attending, y = n)) +
+    geom_col() +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, fig.cap="Location of adult SCC patients"}
+df_first %>%
+    filter(!ed_unit) %>%
+    count(nurse_unit, sort = TRUE) %>%
+    mutate_at("nurse_unit", fct_inorder) %>%
+    ggplot(aes(x = nurse_unit, y = n)) +
+    geom_col() +
     theme_bg()
 ```
 
