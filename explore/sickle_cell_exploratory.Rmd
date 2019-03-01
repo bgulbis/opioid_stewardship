@@ -18,6 +18,7 @@ options(
 ```{r}
 library(tidyverse)
 library(kableExtra)
+library(themebg)
 
 dir_data <- "../data/tidy/sickle_cell"
 tz_locale <- locale(tz = "US/Central")
@@ -401,24 +402,57 @@ timing_pca <- df_pca %>%
     mutate(med_type = "pca")
 
 df_timing <- bind_rows(timing_opioids, timing_other, timing_pca) %>%
-    arrange(encounter_id, event_time_admit)
+    arrange(encounter_id, event_time_admit) %>%
+    mutate(
+        ed_unit = nurse_unit %in% c(
+            "HH VUHH",
+            "HH EDHH",
+            "HH EDTR",
+            "HH EREV",
+            "HH OBEC",
+            "HC EDPD"
+        )
+    )
+
+df_first <- df_timing %>%
+    distinct(encounter_id, ed_unit, .keep_all = TRUE)
+
+df_first_type <- df_timing %>%
+    distinct(encounter_id, ed_unit, med_type, .keep_all = TRUE)
+
 ```
 
 
-```{r, eval=FALSE}
-df_pca <- data_pca %>%
-    mutate(pca = TRUE) %>%
-    distinct(encounter_id, pca)
+```{r}
+df_first %>%
+    ggplot(aes(x = med_type)) +
+    geom_bar() +
+    facet_wrap(~ ed_unit) +
+    theme_bg()
+```
 
-df_meds <- data_meds %>%
-    mutate(med = TRUE) %>%
-    distinct(encounter_id, med)
+```{r}
+df_first_type %>%
+    filter(!ed_unit) %>%
+    ggplot(aes(x = med_type, y = event_time_admit)) +
+    geom_boxplot() +
+    theme_bg()
+```
 
-x <- data_pts %>%
-    left_join(df_meds, by = "encounter_id") %>%
-    left_join(df_pca, by = "encounter_id")
+```{r}
+df_first_type %>%
+    filter(!ed_unit) %>%
+    ggplot(aes(x = med_type)) +
+    geom_bar() +
+    theme_bg()
+```
 
-y <- anti_join(data_pca, data_pts, by = "encounter_id") %>%
-    distinct(encounter_id)
+```{r}
+df_first_type %>%
+    filter(!ed_unit) %>%
+    mutate_at("event_time_admit", list(~. * 24)) %>%
+    ggplot(aes(x = event_time_admit, color = med_type)) +
+    geom_freqpoly(binwidth = 6) +
+    theme_bg()
 ```
 
