@@ -7,6 +7,8 @@ output:
         code_folding: hide
 ---
 
+Data from Nov 2018 to Feb 2019
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 options(
@@ -445,24 +447,29 @@ df_first_n <- df_timing %>%
 
 ### Adult Patients
 
-```{r}
+```{r, fig.cap="First type of pain medication given in ED and on the floor"}
 df_first %>%
+    mutate_at("ed_unit", list(~ if_else(., "ED", "Floor"))) %>%
     ggplot(aes(x = med_type)) +
     geom_bar() +
+    xlab(NULL) +
+    ylab("Patients") +
     facet_wrap(~ ed_unit) +
     theme_bg()
 ```
 
-```{r}
+```{r, fig.cap="Time from admission to administration of the first dose of each pain medication type on the floor."}
 df_first_type %>%
     filter(!ed_unit) %>%
     mutate_at("event_time_admit", list(~. * 24)) %>%
     ggplot(aes(x = med_type, y = event_time_admit)) +
     geom_boxplot() +
+    xlab(NULL) +
+    ylab("Time (hours)") +
     theme_bg()
 ```
 
-```{r}
+```{r, fig.cap="Percent of patients receiving each type of pain medication at any time while on the floor."}
 df_first_type %>%
     filter(!ed_unit) %>%
     count(med_type, sort = TRUE) %>%
@@ -470,24 +477,32 @@ df_first_type %>%
     mutate_at("med_type", fct_inorder) %>%
     ggplot(aes(x = med_type, y = pct)) +
     geom_col() +
+    xlab(NULL) +
+    ylab("Patients (%)") +
     theme_bg()
 ```
 
-```{r, fig.cap="Time to first type of each pain med"}
+```{r, fig.cap="Time from admission to administration of the first type of each pain med on the floor."}
 df_first_type %>%
     filter(!ed_unit) %>%
     mutate_at("event_time_admit", list(~. * 24)) %>%
     ggplot(aes(x = event_time_admit, color = med_type)) +
     geom_freqpoly(binwidth = 6) +
+    scale_x_continuous("Time from admission (hours)", breaks = seq(-72, 240, 24)) +
+    ylab("Patients") +
+    scale_color_brewer("Medication", palette = "Set1") +
     theme_bg()
 ```
 
-```{r}
+```{r, fig.cap="Time from admission to administration of all pain meds"}
 df_timing %>%
     filter(facility == "HH HERMANN") %>%
     mutate_at("event_time_admit", list(~. * 24)) %>%
     ggplot(aes(x = event_time_admit, color = med_type)) +
     geom_freqpoly(binwidth = 6) +
+    scale_x_continuous("Time from admission (hours)", breaks = seq(-72, 720, 72)) +
+    ylab("Patients") +
+    scale_color_brewer("Medication", palette = "Set1") +
     theme_bg()
 ```
 
@@ -500,6 +515,8 @@ df_first %>%
     mutate_at("attending", fct_rev) %>%
     ggplot(aes(x = attending, y = n)) +
     geom_col() +
+    xlab(NULL) +
+    ylab("Number of patients") +
     coord_flip() +
     theme_bg()
 ```
@@ -512,6 +529,8 @@ df_first_type %>%
     mutate_at("attending", fct_rev) %>%
     ggplot(aes(x = attending, y = n)) +
     geom_col() +
+    xlab(NULL) +
+    ylab("Number of patients") +
     coord_flip() +
     theme_bg()
 ```
@@ -523,6 +542,8 @@ df_first %>%
     mutate_at("nurse_unit", fct_inorder) %>%
     ggplot(aes(x = nurse_unit, y = n)) +
     geom_col() +
+    xlab(NULL) +
+    ylab("Number of patients") +
     theme_bg()
 ```
 
