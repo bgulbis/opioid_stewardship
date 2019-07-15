@@ -1,0 +1,586 @@
+---
+title: "Sickle Cell Patients"
+author: "Brian Gulbis, PharmD, BCPS"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+    html_document:
+        code_folding: hide
+---
+
+Data from Nov 2018 to Feb 2019
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(
+    knitr.table.format = "html",
+    knitr.kable.NA = ""
+)
+```
+
+```{r}
+library(tidyverse)
+library(kableExtra)
+library(themebg)
+
+dir_data <- "../data/tidy/sickle_cell"
+tz_locale <- locale(tz = "US/Central")
+
+get_data <- function(path, pattern) {
+    f <- list.files(path, pattern, full.names = TRUE)
+    
+    n <- f %>% 
+        purrr::map_int(~ nrow(data.table::fread(.x, select = 1L))) 
+
+    f[n > 0] %>%
+    purrr::map_df(
+        readr::read_csv,
+        locale = tz_locale
+    ) %>%
+    rename_all(stringr::str_to_lower)
+}
+
+data_pts <- get_data(dir_data, "patients") 
+data_meds <- get_data(dir_data, "narcotics") %>%
+    mutate_at("med", str_to_lower)
+data_pca <- get_data(dir_data, "pca")
+
+```
+
+```{r test, eval=FALSE}
+data_icd <- get_data(dir_data, "patients_2019") 
+data_drg <- get_data(dir_data, "patients-drg")
+pts_drg <- distinct(data_drg, encounter_id)
+
+x <- semi_join(data_icd, data_drg, by = "encounter_id")
+y <- semi_join(data_drg, data_icd, by = "encounter_id") %>%
+    distinct(encounter_id)
+
+z <- data_icd %>%
+    distinct(encounter_id) %>%
+    full_join(pts_drg, by = "encounter_id") %>%
+    distinct(encounter_id) 
+
+```
+
+```{r}
+df <- data_pts %>%
+    mutate_at(
+        c("race", "sex", "dispo_dc", "med_service_dc", "encounter_type"), 
+        list(~coalesce(., "Unknown"))
+    ) %>%
+    mutate(
+        dispo_group = case_when(
+            str_detect(dispo_dc, "Hospice|Deceased") ~ "Deceased / Hospice",
+            str_detect(dispo_dc, "Home|Left|Elopement") ~ "Home",
+            str_detect(dispo_dc, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
+        ),
+        reason_admit = if_else(priority == 1, "Yes", "No")
+    )
+
+df_sex <- count(df, sex)
+df_race <- count(df, race)
+df_dispo <- count(df, dispo_group)
+df_medsvc <- count(df, med_service_dc)
+df_encntr <- count(df, encounter_type)
+df_primary <- count(df, reason_admit)
+
+n_sex <- nrow(df_sex)
+n_race <- nrow(df_race)
+n_dispo <- nrow(df_dispo)
+n_medsvc <- nrow(df_medsvc)
+n_encntr <- nrow(df_encntr)
+n_primary <- nrow(df_primary)
+
+df %>%
+    add_count(encounter_type) %>%
+    unite(encounter_type, encounter_type, n) %>%
+    add_count(sex) %>%
+    unite(sex, sex, n) %>%
+    add_count(race) %>%
+    unite(race, race, n) %>%
+    add_count(dispo_group) %>%
+    unite(dispo_group, dispo_group, n) %>%
+    add_count(med_service_dc) %>%
+    unite(med_service_dc, med_service_dc, n) %>%
+    add_count(reason_admit) %>%
+    unite(reason_admit, reason_admit, n) %>%
+    select(
+        encounter_type,
+        sex,
+        race,
+        dispo_group,
+        med_service_dc,
+        reason_admit
+    ) %>%
+    gather(measure, value) %>%
+    distinct() %>%
+    separate(value, c("var", "value"), sep = "_") %>%
+    mutate_at("value", as.numeric) %>%
+    mutate(pct = value / nrow(data_pts) * 100) %>%
+    arrange(measure, desc(value)) %>%
+    select(-measure) %>%
+    knitr::kable(
+        format = "html",
+        digits = 0,
+        caption = "Demographics for all patients with a sickle cell ICD-10-CM code",
+        col.names = c(
+            "Measure",
+            "N",
+            "(%)"
+        )
+    ) %>%
+    kable_styling(full_width = TRUE) %>%
+    group_rows(
+        group_label = "Disposition", 
+        start_row = 1, 
+        end_row = n_dispo
+    ) %>%
+    group_rows(
+        group_label = "Encounter Type", 
+        start_row = 1 + n_dispo, 
+        end_row = n_dispo + n_encntr
+    ) %>%
+    group_rows(
+        group_label = "Discharge Service", 
+        start_row = 1 + n_dispo + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc
+    ) %>%
+    group_rows(
+        group_label = "Race", 
+        start_row = 1 + n_dispo + n_medsvc + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race
+    ) %>%
+    group_rows(
+        group_label = "Primary ICD Code", 
+        start_row = 1 + n_dispo + n_encntr + n_medsvc + n_race, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race + n_primary
+    ) %>%
+    group_rows(
+        group_label = "Sex", 
+        start_row = 1 + n_dispo + n_encntr + n_medsvc + n_race + n_primary, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race + n_primary + n_sex
+    ) 
+
+```
+
+```{r}
+data_pts %>%
+    summarize_at(
+        c("age", "los"),
+        list(
+            ~mean,
+            ~sd, 
+            ~median,
+            q25 = ~quantile(., 0.25), 
+            q75 = ~quantile(., 0.75)
+        ),
+        na.rm = TRUE
+    ) %>%
+    gather(key, value) %>%
+    separate(key, c("var", "measure"), sep = "_") %>%
+    spread(measure, value) %>%
+    select(
+        var,
+        mean,
+        sd,
+        median,
+        q25,
+        q75
+    ) %>%
+    mutate_at(
+        "var", 
+        str_replace_all,
+        pattern = c(
+            "age" = "Age (years)",
+            "los" = "Length of stay (days)"
+        )
+    ) %>%
+    knitr::kable(
+        # caption = "Demographics for all patients with a sickle cell ICD-10-CM code",
+        digits = 1,
+        col.names = c(
+            "Variable",
+            "Mean",
+            "Std Dev",
+            "Median",
+            "25th",
+            "75th"
+        )
+    ) %>%
+    kable_styling()
+```
+
+```{r}
+df_all_opioids <- data_meds %>%
+    filter(
+        drug_class %in% c("narcotic analgesics", "narcotic analgesic combinations"),
+        med != "tramadol"
+    ) 
+
+df_all_other <- anti_join(data_meds, df_all_opioids, by = "event_id")
+
+```
+
+
+## Patients with Sickle Cell as Primary ICD Code
+
+```{r}
+df_scc <- data_pts %>%
+    filter(priority == 1)
+
+df_meds <- semi_join(data_meds, df_scc, by = "encounter_id")
+df_pca <- semi_join(data_pca, df_scc, by = "encounter_id")
+
+df_opioids <- df_meds %>%
+    filter(
+        drug_class %in% c("narcotic analgesics", "narcotic analgesic combinations"),
+        med != "tramadol"
+    ) 
+
+df_non_opioids <- anti_join(df_meds, df_opioids, by = "event_id")
+
+```
+
+```{r}
+library(lubridate)
+
+df_meds_first <- df_meds %>%
+    arrange(encounter_id, clinical_event_datetime) %>%
+    distinct(encounter_id, .keep_all = TRUE) %>%
+    select(encounter_id, clinical_event_datetime) %>%
+    mutate(
+        admit_day = floor_date(clinical_event_datetime, unit = "day"),
+        admit_month = floor_date(clinical_event_datetime, unit = "month")
+    ) %>%
+    left_join(
+        data_pts[c("encounter_id", "priority", "med_service_dc", "los", "encounter_type")],
+        by = "encounter_id"
+    ) %>%
+    filter(
+        priority == 1,
+        med_service_dc != "Pediatrics",
+        encounter_type == "Inpatient"
+    )
+    
+df_admits <- df_meds_first %>%
+    add_count(admit_day) %>%
+    rename(n_day = n) %>%
+    add_count(admit_month) %>%
+    rename(n_month = n) %>%
+    mutate(dc_day = floor_date(admit_day + days(round(los, 0)), unit = "day"))
+
+t <- interval(mdy("11/1/2018", tz = "US/Central"), mdy("2/28/2019", tz = "US/Central"))
+
+df_daily <- df_admits %>%
+    select(encounter_id, admit_day, dc_day)
+
+l <- map2(t, df_daily$admit_day, ~ .y %within% .x)
+```
+
+
+```{r}
+df <- df_scc %>%
+    mutate_at(
+        c("race", "sex", "dispo_dc", "med_service_dc", "encounter_type"), 
+        list(~coalesce(., "Unknown"))
+    ) %>%
+    mutate(
+        dispo_group = case_when(
+            str_detect(dispo_dc, "Hospice|Deceased") ~ "Deceased / Hospice",
+            str_detect(dispo_dc, "Home|Left|Elopement") ~ "Home",
+            str_detect(dispo_dc, "DC/|Acute|Skilled|Intermediate") ~ "Transfered"
+        )
+    )
+
+df_sex <- count(df, sex)
+df_race <- count(df, race)
+df_dispo <- count(df, dispo_group)
+df_medsvc <- count(df, med_service_dc)
+df_encntr <- count(df, encounter_type)
+
+n_sex <- nrow(df_sex)
+n_race <- nrow(df_race)
+n_dispo <- nrow(df_dispo)
+n_medsvc <- nrow(df_medsvc)
+n_encntr <- nrow(df_encntr)
+
+df %>%
+    add_count(encounter_type) %>%
+    unite(encounter_type, encounter_type, n) %>%
+    add_count(sex) %>%
+    unite(sex, sex, n) %>%
+    add_count(race) %>%
+    unite(race, race, n) %>%
+    add_count(dispo_group) %>%
+    unite(dispo_group, dispo_group, n) %>%
+    add_count(med_service_dc) %>%
+    unite(med_service_dc, med_service_dc, n) %>%
+    select(
+        encounter_type,
+        sex,
+        race,
+        dispo_group,
+        med_service_dc
+    ) %>%
+    gather(measure, value) %>%
+    distinct() %>%
+    separate(value, c("var", "value"), sep = "_") %>%
+    mutate_at("value", as.numeric) %>%
+    mutate(pct = value / nrow(df_scc) * 100) %>%
+    arrange(measure, desc(value)) %>%
+    select(-measure) %>%
+    knitr::kable(
+        format = "html",
+        digits = 0,
+        caption = "Demographics for patients with a primary sickle cell ICD-10-CM code",
+        col.names = c(
+            "Measure",
+            "N",
+            "(%)"
+        )
+    ) %>%
+    kable_styling(full_width = TRUE) %>%
+    group_rows(
+        group_label = "Disposition", 
+        start_row = 1, 
+        end_row = n_dispo
+    ) %>%
+    group_rows(
+        group_label = "Encounter Type", 
+        start_row = 1 + n_dispo, 
+        end_row = n_dispo + n_encntr
+    ) %>%
+    group_rows(
+        group_label = "Discharge Service", 
+        start_row = 1 + n_dispo + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc
+    ) %>%
+    group_rows(
+        group_label = "Race", 
+        start_row = 1 + n_dispo + n_medsvc + n_encntr, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race
+    ) %>%
+    group_rows(
+        group_label = "Sex", 
+        start_row = 1 + n_dispo + n_encntr + n_medsvc + n_race, 
+        end_row = n_dispo + n_encntr + n_medsvc + n_race + n_sex
+    ) 
+
+```
+
+```{r}
+df_scc %>%
+    summarize_at(
+        c("age", "los"),
+        list(
+            ~mean,
+            ~sd, 
+            ~median,
+            q25 = ~quantile(., 0.25), 
+            q75 = ~quantile(., 0.75)
+        ),
+        na.rm = TRUE
+    ) %>%
+    gather(key, value) %>%
+    separate(key, c("var", "measure"), sep = "_") %>%
+    spread(measure, value) %>%
+    select(
+        var,
+        mean,
+        sd,
+        median,
+        q25,
+        q75
+    ) %>%
+    mutate_at(
+        "var", 
+        str_replace_all,
+        pattern = c(
+            "age" = "Age (years)",
+            "los" = "Length of stay (days)"
+        )
+    ) %>%
+    knitr::kable(
+        # caption = "Demographics for all patients with a sickle cell ICD-10-CM code",
+        digits = 1,
+        col.names = c(
+            "Variable",
+            "Mean",
+            "Std Dev",
+            "Median",
+            "25th",
+            "75th"
+        )
+    ) %>%
+    kable_styling()
+```
+
+```{r}
+timing_opioids <- df_opioids %>%
+    select(
+        encounter_id, 
+        event_time_admit, 
+        med,
+        route,
+        nurse_unit:attending
+    ) %>%
+    mutate(
+        med_type = case_when(
+            route == "PO" ~ "opioid_po",
+            route == "TOP" ~ "opioid_patch",
+            TRUE ~ "opioid_iv"
+        )
+    )
+
+timing_other <- df_non_opioids %>%
+    select(
+        encounter_id, 
+        event_time_admit, 
+        med,
+        route,
+        nurse_unit:attending
+    ) %>%
+    mutate(med_type = "other")
+
+timing_pca <- df_pca %>%
+    filter(event == "PCA Drug") %>%
+    select(
+        encounter_id, 
+        event_time_admit, 
+        med = result,
+        nurse_unit:attending
+    ) %>%
+    mutate(med_type = "pca")
+
+df_timing <- bind_rows(timing_opioids, timing_other, timing_pca) %>%
+    arrange(encounter_id, event_time_admit) %>%
+    mutate(
+        ed_unit = nurse_unit %in% c(
+            "HH VUHH",
+            "HH EDHH",
+            "HH EDTR",
+            "HH EREV",
+            "HH OBEC",
+            "HC EDPD"
+        )
+    )
+
+df_first <- df_timing %>%
+    filter(facility == "HH HERMANN") %>%
+    distinct(encounter_id, ed_unit, .keep_all = TRUE)
+
+df_first_type <- df_timing %>%
+    filter(facility == "HH HERMANN") %>%
+    distinct(encounter_id, ed_unit, med_type, .keep_all = TRUE)
+
+df_first_n <- df_timing %>%
+    filter(
+        facility == "HH HERMANN",
+        !ed_unit
+    ) %>%
+    distinct(encounter_id)
+
+```
+
+### Adult Patients
+
+```{r, fig.cap="First type of pain medication given in ED and on the floor"}
+df_first %>%
+    mutate_at("ed_unit", list(~ if_else(., "ED", "Floor"))) %>%
+    ggplot(aes(x = med_type)) +
+    geom_bar() +
+    xlab(NULL) +
+    ylab("Patients") +
+    facet_wrap(~ ed_unit) +
+    theme_bg()
+```
+
+```{r, fig.cap="Time from admission to administration of the first dose of each pain medication type on the floor."}
+df_first_type %>%
+    filter(!ed_unit) %>%
+    mutate_at("event_time_admit", list(~. * 24)) %>%
+    ggplot(aes(x = med_type, y = event_time_admit)) +
+    geom_boxplot() +
+    xlab(NULL) +
+    ylab("Time (hours)") +
+    theme_bg()
+```
+
+```{r, fig.cap="Percent of patients receiving each type of pain medication at any time while on the floor."}
+df_first_type %>%
+    filter(!ed_unit) %>%
+    count(med_type, sort = TRUE) %>%
+    mutate(pct = (n / nrow(df_first_n)) * 100) %>%
+    mutate_at("med_type", fct_inorder) %>%
+    ggplot(aes(x = med_type, y = pct)) +
+    geom_col() +
+    xlab(NULL) +
+    ylab("Patients (%)") +
+    theme_bg()
+```
+
+```{r, fig.cap="Time from admission to administration of the first type of each pain med on the floor."}
+df_first_type %>%
+    filter(!ed_unit) %>%
+    mutate_at("event_time_admit", list(~. * 24)) %>%
+    ggplot(aes(x = event_time_admit, color = med_type)) +
+    geom_freqpoly(binwidth = 6) +
+    scale_x_continuous("Time from admission (hours)", breaks = seq(-72, 240, 24)) +
+    ylab("Patients") +
+    scale_color_brewer("Medication", palette = "Set1") +
+    theme_bg()
+```
+
+```{r, fig.cap="Time from admission to administration of all pain meds"}
+df_timing %>%
+    filter(facility == "HH HERMANN") %>%
+    mutate_at("event_time_admit", list(~. * 24)) %>%
+    ggplot(aes(x = event_time_admit, color = med_type)) +
+    geom_freqpoly(binwidth = 6) +
+    scale_x_continuous("Time from admission (hours)", breaks = seq(-72, 720, 72)) +
+    ylab("Patients") +
+    scale_color_brewer("Medication", palette = "Set1") +
+    theme_bg()
+```
+
+
+```{r, fig.cap="Attending for all adult SCC patients"}
+df_first %>%
+    filter(!ed_unit) %>%
+    count(attending, sort = TRUE) %>%
+    mutate_at("attending", fct_inorder) %>%
+    mutate_at("attending", fct_rev) %>%
+    ggplot(aes(x = attending, y = n)) +
+    geom_col() +
+    xlab(NULL) +
+    ylab("Number of patients") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, fig.cap="Attending for SCC patients receiving PCA"}
+df_first_type %>%
+    filter(med_type == "pca") %>%
+    count(attending, sort = TRUE) %>%
+    mutate_at("attending", fct_inorder) %>%
+    mutate_at("attending", fct_rev) %>%
+    ggplot(aes(x = attending, y = n)) +
+    geom_col() +
+    xlab(NULL) +
+    ylab("Number of patients") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, fig.cap="Location of adult SCC patients"}
+df_first %>%
+    filter(!ed_unit) %>%
+    count(nurse_unit, sort = TRUE) %>%
+    mutate_at("nurse_unit", fct_inorder) %>%
+    ggplot(aes(x = nurse_unit, y = n)) +
+    geom_col() +
+    xlab(NULL) +
+    ylab("Number of patients") +
+    theme_bg()
+```
+
