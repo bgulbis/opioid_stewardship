@@ -242,6 +242,43 @@ df_non_opioids <- anti_join(df_meds, df_opioids, by = "event_id")
 ```
 
 ```{r}
+library(lubridate)
+
+df_meds_first <- df_meds %>%
+    arrange(encounter_id, clinical_event_datetime) %>%
+    distinct(encounter_id, .keep_all = TRUE) %>%
+    select(encounter_id, clinical_event_datetime) %>%
+    mutate(
+        admit_day = floor_date(clinical_event_datetime, unit = "day"),
+        admit_month = floor_date(clinical_event_datetime, unit = "month")
+    ) %>%
+    left_join(
+        data_pts[c("encounter_id", "priority", "med_service_dc", "los", "encounter_type")],
+        by = "encounter_id"
+    ) %>%
+    filter(
+        priority == 1,
+        med_service_dc != "Pediatrics",
+        encounter_type == "Inpatient"
+    )
+    
+df_admits <- df_meds_first %>%
+    add_count(admit_day) %>%
+    rename(n_day = n) %>%
+    add_count(admit_month) %>%
+    rename(n_month = n) %>%
+    mutate(dc_day = floor_date(admit_day + days(round(los, 0)), unit = "day"))
+
+t <- interval(mdy("11/1/2018", tz = "US/Central"), mdy("2/28/2019", tz = "US/Central"))
+
+df_daily <- df_admits %>%
+    select(encounter_id, admit_day, dc_day)
+
+l <- map2(t, df_daily$admit_day, ~ .y %within% .x)
+```
+
+
+```{r}
 df <- df_scc %>%
     mutate_at(
         c("race", "sex", "dispo_dc", "med_service_dc", "encounter_type"), 
