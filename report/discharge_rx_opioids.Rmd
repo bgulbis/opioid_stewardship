@@ -1,0 +1,40 @@
+---
+title: "Opioid Discharge Prescriptions"
+author: "Brian Gulbis, PharmD, BCPS"
+date: "7/15/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(themebg)
+
+df <- read_csv("data/tidy/discharge_rx/discharge_rx_opioids_count.cscv") %>%
+    rename_all(str_to_lower) %>%
+    distinct(order_id)
+```
+
+```{r, fig.cap="Number of discharge prescriptions for opioids by nursing unit."}
+df %>%
+    count(nursing_unit, med) %>%
+    ggplot(aes(x = nursing_unit, y = n, fill = med)) +
+    geom_col() +
+    scale_fill_brewer(NULL, palette = "Set1") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, fig.cap="Number of discharge prescriptions for opioids by provider role."}
+df %>%
+    count(provider_position, med) %>%
+    ggplot(aes(x = provider_position, y = n, fill = med)) +
+    geom_col() +
+    scale_fill_brewer(NULL, palette = "Set1") +
+    coord_flip() +
+    theme_bg()
+```
+
