@@ -13,8 +13,7 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 library(tidyverse)
 library(themebg)
 
-df <- read_csv("../data/tidy/discharge_rx/discharge_rx_opioids_count.csv") %>%
-    rename_all(str_to_lower) %>%
+df <- mbohelpr::get_data("../data/tidy/discharge_rx", "discharge_rx_opioids") %>%
     distinct(order_id, .keep_all = TRUE) %>%
     mutate_at("medication", str_to_lower) %>%
     mutate_at("medication", fct_infreq) %>%
