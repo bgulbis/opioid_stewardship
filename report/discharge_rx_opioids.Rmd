@@ -13,28 +13,59 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 library(tidyverse)
 library(themebg)
 
-df <- read_csv("data/tidy/discharge_rx/discharge_rx_opioids_count.cscv") %>%
+df <- read_csv("../data/tidy/discharge_rx/discharge_rx_opioids_count.csv") %>%
     rename_all(str_to_lower) %>%
-    distinct(order_id)
+    distinct(order_id, .keep_all = TRUE) %>%
+    mutate_at("medication", str_to_lower) %>%
+    mutate_at("medication", fct_infreq) %>%
+    mutate_at("medication", fct_lump, n = 5, other_level = "all others") %>%
+    mutate_at(
+        "provider_position",
+        str_replace_all,
+        pattern = " eOrder",
+        replacement = ""
+    ) %>%
+        mutate_at(
+        "provider_position",
+        str_replace_all,
+        pattern = "Fellow/Resident",
+        replacement = "Fel/Res"
+    )
+
 ```
 
-```{r, fig.cap="Number of discharge prescriptions for opioids by nursing unit."}
+```{r, fig.cap="Top 20 nursing units with discharge prescriptions for opioids from April to June 2019.", fig.height=7}
 df %>%
-    count(nursing_unit, med) %>%
-    ggplot(aes(x = nursing_unit, y = n, fill = med)) +
+    mutate_at("nurse_unit", fct_infreq) %>%
+    mutate_at("nurse_unit", fct_lump, n = 20, other_level = "All Others") %>%
+    mutate_at("nurse_unit", fct_rev) %>%
+    count(nurse_unit, medication, sort = TRUE) %>%
+    ggplot(aes(x = nurse_unit, y = n, fill = medication)) +
     geom_col() +
+    ggtitle("Nursing units with the most opioid discharge prescriptions") +
+    xlab(NULL) +
+    ylab("Number of prescriptions") +
     scale_fill_brewer(NULL, palette = "Set1") +
     coord_flip() +
-    theme_bg()
+    theme_bg() +
+    theme(legend.position = "top")
 ```
 
-```{r, fig.cap="Number of discharge prescriptions for opioids by provider role."}
+```{r, fig.cap="Top 15 provider roles writing discharge prescriptions for opioids from April to June 2019.", fig.height=7}
 df %>%
-    count(provider_position, med) %>%
-    ggplot(aes(x = provider_position, y = n, fill = med)) +
+    mutate_at("provider_position", fct_explicit_na) %>%
+    mutate_at("provider_position", fct_infreq) %>%
+    mutate_at("provider_position", fct_lump, n = 15, other_level = "All Others") %>%
+    mutate_at("provider_position", fct_rev) %>%
+    count(provider_position, medication, sort = TRUE) %>%
+    ggplot(aes(x = provider_position, y = n, fill = medication)) +
     geom_col() +
+    ggtitle("Provider roles writing opioid discharge prescriptions") +
+    xlab(NULL) +
+    ylab("Number of prescriptions") +
     scale_fill_brewer(NULL, palette = "Set1") +
     coord_flip() +
-    theme_bg()
+    theme_bg() +
+    theme(legend.position = "top")
 ```
 
