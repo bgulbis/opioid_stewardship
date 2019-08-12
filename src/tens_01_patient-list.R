@@ -12,22 +12,25 @@ data_dir <- "data/tidy/tens"
 
 data_pt <- get_data(data_dir, "pt_form_data")
 data_meds <- get_data(data_dir, "pain_meds")
+data_pca <- get_data(data_dir, "pca")
 data_surg <- get_data(data_dir, "surgeries")
-data_pain <- get_data(data_dir, "pain_scores")
+data_pain <- get_data(data_dir, "pain_scores", col_types = "?????c") %>%
+    mutate_at("result", as.numeric) %>%
+    filter(!is.na(result))
 
 # tidy data -----------------------------------------
 
 df_surg_start <- data_surg %>% 
-    arrange(fin, surgery_start_datetime, desc(primary_procedure)) %>%
-    distinct(fin, surg_case_id, .keep_all = TRUE)
+    arrange(encounter_id, surgery_start_datetime, desc(primary_procedure)) %>%
+    distinct(encounter_id, surg_case_id, .keep_all = TRUE)
 
 df_surg_first <- df_surg_start %>%
-    distinct(fin, .keep_all = TRUE) %>%
-    select(fin, surgery_start_datetime, surgery_stop_datetime)
+    distinct(encounter_id, .keep_all = TRUE) %>%
+    select(encounter_id, surgery_start_datetime, surgery_stop_datetime)
 
 df_meds <- data_meds %>%
-    inner_join(df_surg_first, by = "fin") %>%
-    arrange(fin, event_datetime) %>%
+    inner_join(df_surg_first, by = "encounter_id") %>%
+    arrange(encounter_id, event_datetime) %>%
     filter(event_datetime >= surgery_stop_datetime) %>%
     mutate(
         surg_med_days = difftime(
