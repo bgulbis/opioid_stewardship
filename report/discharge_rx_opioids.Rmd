@@ -1,7 +1,8 @@
 ---
 title: "Opioid Discharge Prescriptions"
+subtitle: "April to July 2019"
 author: "Brian Gulbis, PharmD, BCPS"
-date: "7/15/2019"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
 output: pdf_document
 ---
 
@@ -11,10 +12,12 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 ```{r}
 library(tidyverse)
+library(mbohelpr)
 library(themebg)
 
-df <- mbohelpr::get_data("../data/tidy/discharge_rx", "discharge_rx_opioids") %>%
+df <- get_data("../data/tidy/discharge_rx", "discharge_rx_opioids") %>%
     distinct(order_id, .keep_all = TRUE) %>%
+    filter(age >= 12) %>%
     mutate_at("medication", str_to_lower) %>%
     mutate_at("medication", fct_infreq) %>%
     mutate_at("medication", fct_lump, n = 5, other_level = "all others") %>%
@@ -29,42 +32,115 @@ df <- mbohelpr::get_data("../data/tidy/discharge_rx", "discharge_rx_opioids") %>
         str_replace_all,
         pattern = "Fellow/Resident",
         replacement = "Fel/Res"
+    ) %>%
+    mutate_at(
+        "age",
+        list(
+            ~case_when(
+                age >= 12 & age <= 18 ~ "12-18",
+                age >= 65 ~ "65+",
+                TRUE ~ "19-64"
+            )
+        )
     )
 
+fill_vals <- RColorBrewer::brewer.pal(6, "Set1")
+names(fill_vals) <- levels(df$medication)
+
 ```
 
-```{r, fig.cap="Top 20 nursing units with discharge prescriptions for opioids from April to June 2019.", fig.height=7}
-df %>%
-    mutate_at("nurse_unit", fct_infreq) %>%
-    mutate_at("nurse_unit", fct_lump, n = 20, other_level = "All Others") %>%
-    mutate_at("nurse_unit", fct_rev) %>%
-    count(nurse_unit, medication, sort = TRUE) %>%
-    ggplot(aes(x = nurse_unit, y = n, fill = medication)) +
-    geom_col() +
-    ggtitle("Nursing units with the most opioid discharge prescriptions") +
-    xlab(NULL) +
-    ylab("Number of prescriptions") +
-    scale_fill_brewer(NULL, palette = "Set1") +
-    coord_flip() +
-    theme_bg() +
-    theme(legend.position = "top")
+```{r}
+rx_nurse_units <- function(df, age_grp) {
+    df %>%
+        filter(age == age_grp) %>%
+        mutate_at("nurse_unit", fct_infreq) %>%
+        mutate_at("nurse_unit", fct_lump, n = 20, other_level = "All Others") %>%
+        mutate_at("nurse_unit", fct_rev) %>%
+        count(nurse_unit, medication, sort = TRUE) %>%
+        ggplot(aes(x = nurse_unit, y = n, fill = medication)) +
+        geom_col() +
+        ggtitle(
+            "Nursing units with the most opioid discharge prescriptions",
+            paste("Patients aged", age_grp, "years old")
+        ) +
+        xlab(NULL) +
+        ylab("Number of prescriptions") +
+        scale_fill_manual(NULL, values = fill_vals) +
+        coord_flip() +
+        theme_bg(yticks = FALSE) +
+        theme(
+            legend.position = "top",
+            legend.text = element_text(size = 8),
+            plot.title = element_text(color = "gray15"),
+            plot.subtitle = element_text(color = "gray35")
+        ) +
+        guides(fill = guide_legend(nrow = 2))
+}
 ```
 
-```{r, fig.cap="Top 15 provider roles writing discharge prescriptions for opioids from April to June 2019.", fig.height=7}
-df %>%
-    mutate_at("provider_position", fct_explicit_na) %>%
-    mutate_at("provider_position", fct_infreq) %>%
-    mutate_at("provider_position", fct_lump, n = 15, other_level = "All Others") %>%
-    mutate_at("provider_position", fct_rev) %>%
-    count(provider_position, medication, sort = TRUE) %>%
-    ggplot(aes(x = provider_position, y = n, fill = medication)) +
-    geom_col() +
-    ggtitle("Provider roles writing opioid discharge prescriptions") +
-    xlab(NULL) +
-    ylab("Number of prescriptions") +
-    scale_fill_brewer(NULL, palette = "Set1") +
-    coord_flip() +
-    theme_bg() +
-    theme(legend.position = "top")
+```{r}
+rx_provider_role <- function(df, age_grp) {
+    df %>%
+        filter(age == age_grp) %>%
+        mutate_at("provider_position", fct_explicit_na) %>%
+        mutate_at("provider_position", fct_infreq) %>%
+        mutate_at("provider_position", fct_lump, n = 15, other_level = "All Others") %>%
+        mutate_at("provider_position", fct_rev) %>%
+        count(provider_position, medication, sort = TRUE) %>%
+        ggplot(aes(x = provider_position, y = n, fill = medication)) +
+        geom_col() +
+        ggtitle(
+            "Provider roles writing opioid discharge prescriptions",
+            paste("Patients aged", age_grp, "years old")
+        ) +
+        xlab(NULL) +
+        ylab("Number of prescriptions") +
+        scale_fill_manual(NULL, values = fill_vals) +
+        coord_flip() +
+        theme_bg(yticks = FALSE) +
+        theme(
+            legend.position = "top",
+            legend.text = element_text(size = 8),
+            plot.title = element_text(color = "gray15"),
+            plot.subtitle = element_text(color = "gray35")
+        ) +
+        guides(fill = guide_legend(nrow = 2))   
+}
+```
+
+```{r, fig.cap="Top 20 nursing units with discharge prescriptions for opioids among patients aged 12-18 years old.", fig.height=7}
+
+rx_nurse_units(df, "12-18")
+
+```
+
+```{r, fig.cap="Top 15 provider roles writing discharge prescriptions for opioids among patients aged 12-18 years old.", fig.height=7}
+
+rx_provider_role(df, "12-18")
+
+```
+
+```{r, fig.cap="Top 20 nursing units with discharge prescriptions for opioids among patients aged 19-64 years old.", fig.height=7}
+
+rx_nurse_units(df, "19-64")
+
+```
+
+```{r, fig.cap="Top 15 provider roles writing discharge prescriptions for opioids among patients aged 19-64 years old.", fig.height=7}
+
+rx_provider_role(df, "19-64")
+
+```
+
+```{r, fig.cap="Top 20 nursing units with discharge prescriptions for opioids among patients aged 65 years old and older.", fig.height=7}
+
+rx_nurse_units(df, "65+")
+
+```
+
+```{r, fig.cap="Top 15 provider roles writing discharge prescriptions for opioids among patients aged 65 years old and older.", fig.height=7}
+
+rx_provider_role(df, "65+")
+
 ```
 
