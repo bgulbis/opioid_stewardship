@@ -42,3 +42,6 @@ df_meds <- data_meds %>%
     )
 
 # calculate morphine equivalents
+
+df_meds_mme <- calc_morph_eq(df_meds) %>%
+    filter(!is.na(mme_iv))
