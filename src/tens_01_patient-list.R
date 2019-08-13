@@ -1,6 +1,7 @@
 library(tidyverse)
 library(readxl)
 library(mbohelpr)
+library(lubridate)
 
 pt_list <- read_excel("data/external/tens_patient-list_baseline.xlsx")
 
@@ -45,3 +46,34 @@ df_meds <- data_meds %>%
 
 df_meds_mme <- calc_morph_eq(df_meds) %>%
     filter(!is.na(mme_iv))
+
+df_meds_other <- calc_morph_eq(df_meds) %>%
+    filter(is.na(mme_iv))
+
+df_meds_pain <- data_meds %>%
+    filter(!str_detect(medication, "Sodium Chloride")) %>%
+    select(
+        encounter_id, 
+        med_datetime = event_datetime, 
+        medication, 
+        orig_order_id
+    )
+
+df_pain_scores <- data_pain %>%
+    inner_join(df_surg_first, by = "encounter_id") %>%
+    arrange(encounter_id, event_datetime) %>%
+    filter(event_datetime >= surgery_stop_datetime) %>%
+    left_join(
+        df_meds_pain, 
+        by = c("encounter_id", "order_id" = "orig_order_id")
+    ) %>%
+    filter(
+        is.na(med_datetime) | 
+            (
+                event_datetime >= med_datetime - hours(2) &
+                    event_datetime <= med_datetime + hours(2)
+            )
+    ) %>%
+    arrange(encounter_id, event_datetime, med_datetime) %>%
+    distinct(event_id, .keep_all = TRUE)
+    
