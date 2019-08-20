@@ -2,6 +2,7 @@ library(tidyverse)
 library(readxl)
 library(mbohelpr)
 library(lubridate)
+library(openxlsx)
 
 pt_list <- read_excel("data/external/tens_patient-list_baseline.xlsx")
 
@@ -59,6 +60,11 @@ df_meds_pain <- data_meds %>%
         orig_order_id
     )
 
+df_pca <- data_pca %>%
+    select(-event_id) %>%
+    arrange(encounter_id, event_datetime) %>%
+    spread(event, result)
+
 df_pain_scores <- data_pain %>%
     inner_join(df_surg_first, by = "encounter_id") %>%
     arrange(encounter_id, event_datetime) %>%
@@ -68,12 +74,63 @@ df_pain_scores <- data_pain %>%
         by = c("encounter_id", "order_id" = "orig_order_id")
     ) %>%
     filter(
-        is.na(med_datetime) | 
-            (
-                event_datetime >= med_datetime - hours(2) &
-                    event_datetime <= med_datetime + hours(2)
-            )
+        is.na(med_datetime) | (
+            event_datetime >= med_datetime - hours(2) &
+                event_datetime <= med_datetime + hours(2)
+        )
     ) %>%
     arrange(encounter_id, event_datetime, med_datetime) %>%
     distinct(event_id, .keep_all = TRUE)
     
+# find mobility / gait data
+
+df1 <- distinct(data_pt, event_text1)
+df2 <- distinct(data_pt, event_text2)
+df3 <- distinct(data_pt, event_text3)
+df4 <- distinct(data_pt, event_text4)
+
+pt_fields <- regex("bed|gait|stairs|transfer", ignore_case = TRUE)
+
+df_pt_transfer <- data_pt %>%
+    filter(
+        str_detect(event_text1, pt_fields) |
+            str_detect(event_text2, pt_fields) | 
+            str_detect(event_text3, pt_fields)
+    ) %>%
+    select(fin:result_value3, -event_detail1, -result_value1)
+
+pt_activity <- regex("functional activities", ignore_case = TRUE)
+
+df_pt_activity <- data_pt %>%
+    filter(
+        str_detect(event_text1, pt_activity) |
+            str_detect(event_text2, pt_activity) 
+    ) %>%
+    select(fin:result_value3, -event_detail1, -result_value1) %>%
+    filter(
+        result_value2 != "Done" | is.na(result_value2)
+    )
+
+pt_pain <- regex("BPS|BPAS|pain", ignore_case = TRUE)
+
+df_pt_pain <- data_pt %>%
+    filter(
+        str_detect(event_text1, pt_pain) |
+            str_detect(event_text2, pt_pain) | 
+            str_detect(event_text3, pt_pain)
+    ) %>%
+    select(fin:result_value2, -event_detail1, -result_value1)
+
+# export data ------------------------------------------
+
+export <- list(
+    "PT Gait and Transfer" = df_pt_transfer,
+    "PT Func Activity" = df_pt_activity,
+    "PT Pain" = df_pt_pain,
+    "Opioids" = df_meds_mme,
+    "Multi-Modal Meds" = df_meds_other,
+    "PCA" = df_pca,
+    "Pain Scores" = df_pain_scores
+)
+
+write.xlsx(export, "data/external/tens_baseline_data.xlsx")
