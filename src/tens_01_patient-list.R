@@ -12,6 +12,7 @@ print(fin_mbo)
 # data sets -----------------------------------------
 data_dir <- "data/tidy/tens"
 
+data_demog <- get_data(data_dir, "demographics")
 data_pt <- get_data(data_dir, "pt_form_data")
 data_meds <- get_data(data_dir, "pain_meds")
 data_pca <- get_data(data_dir, "pca")
@@ -28,7 +29,13 @@ df_surg_start <- data_surg %>%
 
 df_surg_first <- df_surg_start %>%
     distinct(encounter_id, .keep_all = TRUE) %>%
-    select(encounter_id, surgery_start_datetime, surgery_stop_datetime)
+    select(
+        encounter_id, 
+        surgery_start_datetime, 
+        surgery_stop_datetime, 
+        preop_los,
+        postop_los
+    )
 
 df_meds <- data_meds %>%
     inner_join(df_surg_first, by = "encounter_id") %>%
@@ -43,13 +50,72 @@ df_meds <- data_meds %>%
         postop_day = floor(surg_med_days)
     )
 
+los <- data_demog %>%
+    summarize_at("los", list(mean = mean, sd = sd))
+
+surg_los <- df_surg_first %>%
+    summarize_at(
+        c("preop_los", "postop_los"), 
+        list(mean = mean, sd = sd, median = median, iqr = IQR)
+    )
+
+df_surg_first %>%
+    ggplot(aes(x = postop_los)) +
+    geom_histogram(binwidth = 1) +
+    coord_cartesian(xlim = c(0, 20)) +
+    themebg::theme_bg()
+
+df_surg_first %>%
+    ggplot(aes(x = "Patients", y = postop_los)) +
+    geom_boxplot() +
+    coord_cartesian(ylim = c(0, 20)) +
+    themebg::theme_bg()
+
+dispo <- data_demog %>%
+    count(disch_disposition, sort = TRUE)
+
 # calculate morphine equivalents
 
 df_meds_mme <- calc_morph_eq(df_meds) %>%
-    filter(!is.na(mme_iv))
-
+    filter(
+        !is.na(mme_iv),
+        medication != "tramadol"
+    ) %>%
+    mutate_at("surg_med_days", ceiling) %>%
+    group_by(encounter_id, surg_med_days) %>%
+    summarize_at("mme_iv", sum, na.rm = TRUE)
+    
 df_meds_other <- calc_morph_eq(df_meds) %>%
-    filter(is.na(mme_iv))
+    filter(
+        (is.na(mme_iv) | medication == "tramadol"),
+        dose > 0
+    ) %>%
+    mutate_at("surg_med_days", ceiling) %>%
+    group_by(encounter_id, surg_med_days, medication, dose_unit) %>%
+    summarize_at("dose", sum, na.rm = TRUE) %>%
+    filter(
+        medication %in% c(
+            "acetaminophen",
+            "celecoxib",
+            "lidocaine topical",
+            "pregabalin",
+            "tramadol",
+            "gabapentin",
+            "naproxen",
+            "ibuprofen",
+            "ketorolac",
+            "indomethacin",
+            "asa/butalbital/caffeine"
+        )
+    )
+
+meds <- list(
+    "Opioids" = df_meds_mme,
+    "Other" = df_meds_other
+)
+
+write.xlsx(meds, "data/external/tens_baseline_mme.xlsx")
+
 
 df_meds_pain <- data_meds %>%
     filter(!str_detect(medication, "Sodium Chloride")) %>%
