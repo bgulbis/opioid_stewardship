@@ -1,0 +1,71 @@
+WITH ICD AS (
+	SELECT DISTINCT
+		NOMENCLATURE.NOMENCLATURE_ID
+	FROM
+		NOMENCLATURE
+	WHERE
+		REGEXP_INSTR(NOMENCLATURE.SOURCE_IDENTIFIER, '^D57') > 0 
+		AND NOMENCLATURE.SOURCE_VOCABULARY_CD = 641836527 -- ICD-10-CM
+		AND NOMENCLATURE.PRINCIPLE_TYPE_CD = 751 -- Disease or Syndrome
+), PATIENTS AS (
+	SELECT DISTINCT
+		ENCOUNTER.ENCNTR_ID,
+		ENCOUNTER.PERSON_ID,
+		DIAGNOSIS.DIAG_PRIORITY
+	FROM
+		DIAGNOSIS,
+		ENCOUNTER,
+		ICD
+	WHERE
+		ENCOUNTER.DISCH_DT_TM BETWEEN 
+			pi_to_gmt(
+				TO_DATE(
+					@Prompt('Enter begin date', 'D', , mono, free, persistent, {'01/01/1800 00:00:00'}, User:80),
+					pi_get_dm_info_char_gen('Date Format Mask|FT','PI EXP|Systems Configuration|Date Format Mask')
+				),
+				pi_time_zone(1, @Variable('BOUSER'))
+			)
+			AND pi_to_gmt(
+				TO_DATE(
+					@Prompt('Enter end date', 'D', , mono, free, persistent, {'01/01/1800 23:59:59'}, User:81),
+					pi_get_dm_info_char_gen('Date Format Mask|FT','PI EXP|Systems Configuration|Date Format Mask')
+				),
+				pi_time_zone(1, @Variable('BOUSER'))
+			)
+		AND ENCOUNTER.ORGANIZATION_ID = 1 -- Memorial Hermann Hospital
+		AND ENCOUNTER.ENCNTR_TYPE_CLASS_CD IN (
+			42631, -- Inpatient
+			688523 -- Observation
+		)
+		AND ENCOUNTER.LOC_FACILITY_CD IN (
+			3310, -- HH HERMANN
+			3796, -- HC Childrens
+			3821, -- HH Clinics
+			3822, -- HH Trans Care
+			3823 -- HH Rehab
+		)
+		AND (
+			ENCOUNTER.ENCNTR_ID = DIAGNOSIS.ENCNTR_ID
+			AND DIAGNOSIS.DIAG_TYPE_CD = 26244 -- Final
+		)
+		AND ICD.NOMENCLATURE_ID = DIAGNOSIS.NOMENCLATURE_ID
+)
+
+SELECT
+    ENCOUNTER.ENCNTR_ID AS ENCOUNTER_ID,
+	TRUNC(ENCOUNTER.DISCH_DT_TM, 'YEAR') AS PT_GROUP,
+	pi_get_cv_display(ENCOUNTER.ENCNTR_TYPE_CD) AS ENCOUNTER_TYPE,
+	PATIENTS.DIAG_PRIORITY AS PRIORITY,
+    ENCOUNTER.DISCH_DT_TM - ENCOUNTER.REG_DT_TM AS LOS,
+    TRUNC(((pi_from_gmt(ENCOUNTER.REG_DT_TM, (pi_time_zone(1, @Variable('BOUSER'))))) - PERSON.BIRTH_DT_TM) / 365.25, 0) AS AGE,
+	pi_get_cv_display(PERSON.RACE_CD) AS RACE,
+	pi_get_cv_display(PERSON.SEX_CD) AS SEX,
+	pi_get_cv_display(ENCOUNTER.MED_SERVICE_CD) AS MED_SERVICE_DC,
+	pi_get_cv_display(ENCOUNTER.DISCH_DISPOSITION_CD) AS DISPO_DC
+FROM
+	ENCOUNTER,
+	PATIENTS,
+	PERSON
+WHERE
+	PATIENTS.ENCNTR_ID = ENCOUNTER.ENCNTR_ID
+	AND PATIENTS.PERSON_ID = PERSON.PERSON_ID
