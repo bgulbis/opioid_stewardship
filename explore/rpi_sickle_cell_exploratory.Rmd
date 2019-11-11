@@ -7,7 +7,7 @@ output:
         code_folding: hide
 ---
 
-Data from May - Nov, 2018 compared with May - Nov, 2019
+Data from May - Oct, 2018 compared with May - Oct, 2019
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
