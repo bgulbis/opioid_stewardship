@@ -1,0 +1,174 @@
+---
+title: "Acetminophen Orders in Day Surgery Patients"
+author: "Brian Gulbis, PharmD, BCPS"
+date: "5/7/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(themebg)
+
+df <- read_excel("../data/raw/apap_dsu.xlsx") %>%
+    rename_all(str_to_lower) %>%
+    filter(!is.na(anesth_start_datetime)) %>%
+    mutate(
+        orig_order_id = if_else(
+            template_order_id == 0, 
+            order_id, 
+            template_order_id
+        )
+    ) %>%
+    distinct(encntr_id, orig_order_id, event_id, .keep_all = TRUE)
+
+first_orders <- df %>%
+    arrange(encntr_id, order_datetime) %>%
+    distinct(encntr_id, surg_case_id, .keep_all = TRUE)
+
+po_before <- first_orders %>%
+    filter(
+        order_datetime < anesth_start_datetime,
+        route %in% c("PO", "GT", "JT")
+    ) %>%
+    mutate(
+        same_day = floor_date(order_datetime, "days") == floor_date(anesth_start_datetime, "days"),
+        given = !is.na(event_id),
+        order_to_surg_min = difftime(
+            anesth_start_datetime,
+            order_datetime, 
+            units = "mins"
+        )
+    ) %>%
+    mutate_at("order_to_surg_min", as.numeric)
+
+ordered_not_given <- po_before %>%
+    filter(!given)
+
+day_of_not_given <- ordered_not_given %>%
+    filter(same_day) 
+
+no_po_order <- first_orders %>%
+    anti_join(po_before, by = "orig_order_id") %>%
+    mutate(
+        iv_during = route %in% c("IV", "IVPB") & 
+            (is.na(dose_datetime) | (
+                dose_datetime > anesth_start_datetime &
+                    dose_datetime < anesth_stop_datetime
+            ))
+    )
+
+fmt_table <- function(.df, .cap, .cols) {
+    knitr::kable(
+        x = .df,
+        caption = .cap,
+        col.names = .cols,
+        booktabs = TRUE,
+        digits = 0
+    )
+}
+```
+
+```{r}
+first_orders %>%
+    mutate(
+        po_before = order_datetime < anesth_start_datetime & 
+            route %in% c("PO", "GT", "JT")
+    ) %>%
+    count(po_before) %>%
+    mutate(pct = n / nrow(first_orders) * 100) %>%
+    fmt_table(
+        "How many patients had oral acetaminophen ordered before surgery?",
+        c("PO orderd before surgery", "No. patients", "% patients")
+    )
+
+```
+
+```{r}
+first_orders %>%
+    mutate(order_prior = order_datetime < admit_datetime) %>%
+    count(order_prior) %>%
+    mutate(pct = n / nrow(first_orders) * 100) %>%
+    fmt_table(
+        "Among all patients, how many had an order placed before admission?",
+        c("Ordered before admit", "No. patients", "% patients")
+    )
+
+```
+
+```{r}
+po_before %>%
+    mutate(order_prior = order_datetime < admit_datetime) %>%
+    count(order_prior) %>%
+    mutate(pct = n / nrow(po_before) * 100) %>%
+    fmt_table(
+        "Among those with orders prior to surgery, how many were placed prior to admission?",
+        c("PO orderd before surgery", "No. patients", "% patients")
+    )
+```
+
+```{r}
+po_before %>%
+    count(given) %>%
+    mutate(pct = n / nrow(po_before) * 100) %>%
+    fmt_table(
+        "Among those with orders prior to surgery, how many received an oral dose before surgery?",
+        c("Dose give before surgery", "No. patients", "% patients")
+    )
+
+```
+
+```{r}
+ordered_not_given %>%
+    mutate(order_prior = order_datetime < admit_datetime) %>%
+    count(order_prior) %>%
+    mutate(pct = n / nrow(ordered_not_given) * 100) %>%
+    fmt_table(
+        "Among those with orders prior to surgery but the dose was not given, how many had orders placed prior to admission?",
+        c("Ordered before admit", "No. patients", "% patients")
+    )
+```
+
+```{r}
+day_of_not_given %>%
+    summarize_at(
+        "order_to_surg_min",
+        list(
+            mean = mean,
+            sd = sd,
+            median = median,
+            iqr = IQR
+        )
+    ) %>%
+    fmt_table(
+        "Among those with orders placed prior to surgery on the day of surgery and not given, how many minutes prior to surgery was the order placed?",
+        c("Mean", "SD", "Median", "IQR")
+    )
+```
+
+```{r, fig.cap="How many minutes prior to surgery was the order placed in patients who were and were not given a dose?"}
+po_before %>%
+    filter(same_day) %>%
+    ggplot(aes(x = given, y = order_to_surg_min)) +
+    geom_boxplot() +
+    ggtitle("Time prior to surgery when order was placed") +
+    xlab("Dose was given") +
+    ylab("Minutes prior to surgery") +
+    theme_bg()
+```
+
+```{r}
+no_po_order %>%
+    count(iv_during) %>%
+    mutate(pct = n / nrow(no_po_order) * 100) %>%
+    fmt_table(
+        "When oral was not ordered before surgery, how many patients received IV acetaminophen during surgery?",
+        c("IV given during surgery", "No. patients", "% patients")
+    )
+```
+
