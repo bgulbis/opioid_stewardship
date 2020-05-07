@@ -2,7 +2,7 @@ WITH DC_RX AS (
 	SELECT DISTINCT
 		ORDERS.ORDER_ID,
 		ENCOUNTER.ENCNTR_ID,
-		TRUNC(((pi_from_gmt(ENCOUNTER.REG_DT_TM, (pi_time_zone(1, @Variable('BOUSER'))))) - PERSON.BIRTH_DT_TM) / 365.25, 0) AS AGE,
+		TRUNC(((pi_from_gmt(ENCOUNTER.REG_DT_TM, 'CST')) - PERSON.BIRTH_DT_TM) / 365.25, 0) AS AGE,
 		ORDERS.CATALOG_CD,
 		ORDERS.ORDERED_AS_MNEMONIC,
 		ORDERS.ORIG_ORDER_DT_TM,
@@ -36,20 +36,27 @@ WITH DC_RX AS (
 		)
 		AND ORDERS.ORIG_ORDER_DT_TM BETWEEN
 		
-			/* pi_to_gmt(TRUNC(SYSDATE - 7, 'DAY'), pi_time_zone(2, @Variable('BOUSER'))) 
-			AND pi_to_gmt(TRUNC(SYSDATE, 'DAY') - (1 / 86400), pi_time_zone(2, @Variable('BOUSER'))) */
+			/* pi_to_gmt(TRUNC(SYSDATE - 7, 'DAY'), 'CST') 
+			AND pi_to_gmt(TRUNC(SYSDATE, 'DAY') - (1 / 86400), 'CST') */
 		
-			pi_to_gmt(TRUNC(ADD_MONTHS(SYSDATE, -1), 'MONTH'), pi_time_zone(2, @Variable('BOUSER'))) 
-			AND pi_to_gmt(TRUNC(SYSDATE, 'MONTH') - (1 / 86400), pi_time_zone(2, @Variable('BOUSER')))
+			pi_to_gmt(TRUNC(ADD_MONTHS(SYSDATE, -1), 'MONTH'), 'CST') 
+			AND pi_to_gmt(TRUNC(SYSDATE, 'MONTH') - (1 / 86400), 'CST')
 			
 		AND ORDERS.ORIG_ORD_AS_FLAG = 1 -- Prescription/Discharge Order
 		AND ORDERS.ENCNTR_ID = ENCOUNTER.ENCNTR_ID
-		AND ENCOUNTER.LOC_FACILITY_CD IN (
-			3310, -- HH HERMANN
-			-- 3796, -- HC Childrens
-			-- 3821, -- HH Clinics
-			3822, -- HH Trans Care
-			3823 -- HH Rehab
+		AND (
+			ENCOUNTER.LOC_FACILITY_CD IN (
+				3310, -- HH HERMANN
+				-- 3796, -- HC Childrens
+				-- 3821, -- HH Clinics
+				3822, -- HH Trans Care
+				3823 -- HH Rehab
+			)
+			OR ENCOUNTER.LOC_NURSE_UNIT_CD IN (
+				43683728, -- HH DSU
+				43683126, -- HH AMSA
+				3245580207 -- HH S AMSA
+			)
 		)
 		AND ENCOUNTER.PERSON_ID = PERSON.PERSON_ID
 		AND ORDERS.ORDER_ID = ORDER_ACTION.ORDER_ID
@@ -197,8 +204,8 @@ WITH DC_RX AS (
 ), RX_ORDERS AS (
 	SELECT DISTINCT
 		LAST_RX.ORDER_ID,
-		pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, (pi_time_zone(1, @Variable('BOUSER')))) AS ORDER_DATETIME,
-		TRUNC(pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, (pi_time_zone(1, @Variable('BOUSER')))), 'MONTH') AS ORDER_MONTH,
+		pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, 'CST') AS ORDER_DATETIME,
+		TRUNC(pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, 'CST'), 'MONTH') AS ORDER_MONTH,
 		LAST_RX.ENCNTR_ID,
 		LAST_RX.AGE_GROUP,
 		LOWER(pi_get_cv_display(LAST_RX.CATALOG_CD)) AS MEDICATION,
