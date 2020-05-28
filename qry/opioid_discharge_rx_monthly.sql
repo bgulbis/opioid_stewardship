@@ -2,7 +2,7 @@ WITH DC_RX AS (
 	SELECT DISTINCT
 		ORDERS.ORDER_ID,
 		ENCOUNTER.ENCNTR_ID,
-		TRUNC(((pi_from_gmt(ENCOUNTER.REG_DT_TM, 'CST')) - PERSON.BIRTH_DT_TM) / 365.25, 0) AS AGE,
+		TRUNC(((pi_from_gmt(ENCOUNTER.REG_DT_TM, 'America/Chicago')) - PERSON.BIRTH_DT_TM) / 365.25, 0) AS AGE,
 		ORDERS.CATALOG_CD,
 		ORDERS.ORDERED_AS_MNEMONIC,
 		ORDERS.ORIG_ORDER_DT_TM,
@@ -36,11 +36,11 @@ WITH DC_RX AS (
 		)
 		AND ORDERS.ORIG_ORDER_DT_TM BETWEEN
 		
-			/* pi_to_gmt(TRUNC(SYSDATE - 7, 'DAY'), 'CST') 
-			AND pi_to_gmt(TRUNC(SYSDATE, 'DAY') - (1 / 86400), 'CST') */
+			/* pi_to_gmt(TRUNC(SYSDATE - 7, 'DAY'), 'America/Chicago') 
+			AND pi_to_gmt(TRUNC(SYSDATE, 'DAY') - (1 / 86400), 'America/Chicago') */
 		
-			pi_to_gmt(TRUNC(ADD_MONTHS(SYSDATE, -1), 'MONTH'), 'CST') 
-			AND pi_to_gmt(TRUNC(SYSDATE, 'MONTH') - (1 / 86400), 'CST')
+			pi_to_gmt(TRUNC(ADD_MONTHS(SYSDATE, -1), 'MONTH'), 'America/Chicago') 
+			AND pi_to_gmt(TRUNC(SYSDATE, 'MONTH') - 1/86400, 'America/Chicago')
 			
 		AND ORDERS.ORIG_ORD_AS_FLAG = 1 -- Prescription/Discharge Order
 		AND ORDERS.ENCNTR_ID = ENCOUNTER.ENCNTR_ID
@@ -204,8 +204,8 @@ WITH DC_RX AS (
 ), RX_ORDERS AS (
 	SELECT DISTINCT
 		LAST_RX.ORDER_ID,
-		pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, 'CST') AS ORDER_DATETIME,
-		TRUNC(pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, 'CST'), 'MONTH') AS ORDER_MONTH,
+		pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, 'America/Chicago') AS ORDER_DATETIME,
+		TRUNC(pi_from_gmt(LAST_RX.ORIG_ORDER_DT_TM, 'America/Chicago'), 'MONTH') AS ORDER_MONTH,
 		LAST_RX.ENCNTR_ID,
 		LAST_RX.AGE_GROUP,
 		LOWER(pi_get_cv_display(LAST_RX.CATALOG_CD)) AS MEDICATION,
