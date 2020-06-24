@@ -1,0 +1,113 @@
+---
+title: "Alvimopan"
+author: "Brian Gulbis, PharmD, BCPS"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(readxl)
+library(lubridate)
+
+f <- "../data/raw/alvimopan.xlsx"
+
+raw_doses <- read_excel(f, sheet = "doses") %>%
+    rename_all(str_to_lower) %>%
+    mutate_at(c("encntr_id", "event_id"), as.character)
+
+raw_surg <- read_excel(f, sheet = "surgeries") %>%
+    rename_all(str_to_lower) %>%
+    mutate_at(c("encntr_id", "surg_case_id"), as.character)
+
+raw_proc <- read_excel(f, sheet = "procedure_codes") %>%
+    rename_all(str_to_lower) %>%
+    mutate_at("encntr_id", as.character)
+
+raw_mue <- read_excel("../data/external/alvimopan_mue.xlsx", sheet="Met")
+```
+
+Data from 3/1/2019 to 2/29/2020
+
+```{r}
+df_codes <- raw_mue %>%
+    select(
+        proc_type = `Met O/E`, 
+        proc_code = `ICD10 Procedure Code`
+    ) %>%
+    mutate_at("proc_type", list(~if_else(proc_code == "0DTP0ZZ", "O", .))) %>%
+    distinct() %>%
+    filter(!is.na(proc_code))
+```
+
+```{r}
+df_proc <- raw_proc %>%
+    left_join(df_codes, by = c("procedure_code" = "proc_code")) %>%
+    arrange(encntr_id, proc_type) %>%
+    distinct(encntr_id, .keep_all = TRUE) %>%
+    mutate_at(
+        "proc_type",
+        str_replace_all,
+        pattern = c(
+            "O" = "open",
+            "E" = "endoscopic"
+        )
+    ) %>%
+    mutate_at("proc_type", list(~coalesce(., "other")))
+
+df_first_dose <- raw_doses %>%
+    mutate(dose_day = floor_date(dose_datetime, unit = "day")) %>%
+    distinct(encntr_id, .keep_all = TRUE) %>%
+    select(encntr_id, dose_day) %>%
+    left_join(df_proc, by = "encntr_id") %>%
+    mutate_at("proc_type", list(~coalesce(., "no_code")))
+
+df_md <- raw_doses %>%
+    distinct(encntr_id, .keep_all = TRUE) %>%
+    select(encntr_id, attending)
+
+df_doses <- raw_doses %>%
+    group_by(encntr_id) %>%
+    count(medication) %>%
+    inner_join(df_md, by = "encntr_id") %>%
+    inner_join(df_first_dose, by = "encntr_id")
+
+```
+
+```{r}
+df_doses %>%
+    group_by(proc_type) %>%
+    summarize_at(
+        "n",
+        list(
+            num_pts = length,
+            mean_doses = mean,
+            sd = sd,
+            min = min,
+            max = max
+        )
+    ) %>%
+    knitr::kable(
+        digits = 1,
+        caption = "Alvimopan utilization by procedure type",
+        col.names = c(
+            "Procedure Type",
+            "Number of Patients",
+            "Mean Doses",
+            "SD",
+            "Min",
+            "Max"
+        )
+    )
+```
+```{r}
+df_md %>%
+    count(attending, sort = TRUE) %>%
+    knitr::kable(
+        caption = "Number of patients by attending physician",
+        col.names = c("Attending", "Number of patients")
+    )
+```
+
