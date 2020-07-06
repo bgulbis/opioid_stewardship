@@ -11,8 +11,9 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 library(tidyverse)
 library(readxl)
 library(lubridate)
+library(openxlsx)
 
-f <- "../data/raw/alvimopan.xlsx"
+f <- "U:/Data/opioid_stewardship/raw/alvimopan.xlsx"
 
 raw_doses <- read_excel(f, sheet = "doses") %>%
     rename_all(str_to_lower) %>%
@@ -102,6 +103,7 @@ df_doses %>%
         )
     )
 ```
+
 ```{r}
 df_md %>%
     count(attending, sort = TRUE) %>%
@@ -109,5 +111,25 @@ df_md %>%
         caption = "Number of patients by attending physician",
         col.names = c("Attending", "Number of patients")
     )
+```
+
+```{r}
+df_xl_proc <- raw_doses %>%
+    select(encntr_id, fin) %>%
+    inner_join(df_first_dose, by = "encntr_id") %>%
+    distinct() %>%
+    select(fin, procedure_code:proc_type)
+
+df_xl_surg <- raw_doses %>%
+    select(encntr_id, fin) %>%
+    inner_join(df_first_dose, by = "encntr_id") %>%
+    distinct() %>%
+    inner_join(raw_surg, by = "encntr_id") %>%
+    select(fin, proc_type, surgery, surg_start_dt_tm, primary_procedure) %>%
+    filter(!is.na(surgery))
+
+l <- list(procedures = df_xl_proc, surgeries = df_xl_surg)
+
+write.xlsx(l, "U:/Data/opioid_stewardship/final/alvimopan_procedures_surgeries.xlsx")
 ```
 
