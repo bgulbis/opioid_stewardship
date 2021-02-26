@@ -15,7 +15,11 @@ WITH LA_DOSES AS (
 		CE_MED_RESULT.ADMIN_ROUTE_CD,
 		pi_get_cv_display(CE_MED_RESULT.ADMIN_ROUTE_CD) AS ROUTE,
 		ORDER_PRODUCT.ITEM_ID,
-		MED_IDENTIFIER.VALUE AS MED_PRODUCT
+		MED_IDENTIFIER.VALUE AS MED_PRODUCT,
+		CASE
+			WHEN ORDERS.TEMPLATE_ORDER_ID = 0 THEN CLINICAL_EVENT.ORDER_ID
+			ELSE ORDERS.TEMPLATE_ORDER_ID
+		END AS ORIG_ORDER_ID
 	FROM
 		CE_MED_RESULT,
 		CLINICAL_EVENT,
@@ -36,23 +40,32 @@ WITH LA_DOSES AS (
 			117038771 -- HYDROcodone
 		)
 		AND CLINICAL_EVENT.EVENT_END_DT_TM BETWEEN
-			pi_to_gmt(
-				TO_DATE(
-					@Prompt('Enter begin date', 'D', , mono, free, persistent, {'01/01/1800 00:00:00'}, User:0), 
-					pi_get_dm_info_char_gen('Date Format Mask|FT','PI EXP|Systems Configuration|Date Format Mask')
-				), 
-				pi_time_zone(1, @Variable('BOUSER'))
+			DECODE(
+				@Prompt('Choose date range', 'A', {'Last Month', 'User-defined'}, mono, free, , , User:0),
+				'Last Month', pi_to_gmt(TRUNC(ADD_MONTHS(SYSDATE, -1), 'MONTH'), 'America/Chicago'),
+				'User-defined', pi_to_gmt(
+					TO_DATE(
+						@Prompt('Enter begin date', 'D', , mono, free, persistent, {'12/01/2020 00:00:00'}, User:1),
+						pi_get_dm_info_char_gen('Date Format Mask|FT','PI EXP|Systems Configuration|Date Format Mask')
+					),
+					pi_time_zone(1, 'America/Chicago')
+				)
 			)
-			AND pi_to_gmt(
-				TO_DATE(
-					@Prompt('Enter end date', 'D', , mono, free, persistent, {'01/01/1800 00:00:00'}, User:1), 
-					pi_get_dm_info_char_gen('Date Format Mask|FT','PI EXP|Systems Configuration|Date Format Mask')
-				) - 1/86400, 
-				pi_time_zone(1, @Variable('BOUSER'))
+			AND DECODE(
+				@Prompt('Choose date range', 'A', {'Last Month', 'User-defined'}, mono, free, , , User:0),
+				'Last Month', pi_to_gmt(TRUNC(SYSDATE, 'MONTH') - 1/86400, 'America/Chicago'),
+				'User-defined', pi_to_gmt(
+					TO_DATE(
+						@Prompt('Enter end date', 'D', , mono, free, persistent, {'01/01/2021 00:00:00'}, User:2),
+						pi_get_dm_info_char_gen('Date Format Mask|FT','PI EXP|Systems Configuration|Date Format Mask')
+					) - 1/86400,
+					pi_time_zone(1, 'America/Chicago')
+				)
 			)
-			-- pi_to_gmt(START_MONTH.START_MONTH, pi_time_zone(2, @Variable('BOUSER')))
-			-- AND pi_to_gmt(TRUNC(SYSDATE, 'MONTH') - (1 / 86400), pi_time_zone(2, @Variable('BOUSER')))
+		AND CLINICAL_EVENT.VALID_UNTIL_DT_TM > DATE '2099-12-31'
 		AND CLINICAL_EVENT.EVENT_ID = CE_MED_RESULT.EVENT_ID
+		AND CE_MED_RESULT.VALID_UNTIL_DT_TM > DATE '2099-12-31'
+		AND (CE_MED_RESULT.ADMIN_DOSAGE > 0 OR CE_MED_RESULT.IV_EVENT_CD > 0)
 		AND CLINICAL_EVENT.ENCNTR_ID = ENCOUNTER.ENCNTR_ID
 		AND ENCOUNTER.ENCNTR_TYPE_CLASS_CD = 42631 -- Inpatient
 		AND CLINICAL_EVENT.ENCNTR_ID = ENCNTR_LOC_HIST.ENCNTR_ID
@@ -67,7 +80,7 @@ WITH LA_DOSES AS (
 		AND ENCNTR_LOC_HIST.END_EFFECTIVE_DT_TM >= CLINICAL_EVENT.EVENT_END_DT_TM
 		AND ENCNTR_LOC_HIST.LOC_FACILITY_CD IN (
 			3310, -- HH HERMANN
-			3796, -- HC Childrens
+			-- 3796, -- HC Childrens
 			3821, -- HH Clinics
 			3822, -- HH Trans Care
 			3823 -- HH Rehab
@@ -97,6 +110,69 @@ WITH LA_DOSES AS (
 		AND ORDER_PRODUCT.ITEM_ID = MED_IDENTIFIER.ITEM_ID
 		AND MED_IDENTIFIER.MED_IDENTIFIER_TYPE_CD = 1564 -- Description
 		AND MED_IDENTIFIER.MED_PRODUCT_ID = 0
+), ALL_DOSES AS (
+	SELECT DISTINCT
+		LA_DOSES.ENCNTR_ID,
+		ORDER_PRODUCT.ITEM_ID,
+		pi_from_gmt(CLINICAL_EVENT.EVENT_END_DT_TM, 'America/Chicago') AS DOSE_DATETIME,
+		CLINICAL_EVENT.EVENT_ID
+	FROM
+		CE_MED_RESULT,
+		CLINICAL_EVENT,
+		LA_DOSES,
+		ORDER_PRODUCT,
+		ORDERS
+	WHERE
+		LA_DOSES.ENCNTR_ID = CLINICAL_EVENT.ENCNTR_ID
+		AND CLINICAL_EVENT.EVENT_CLASS_CD = 158 -- MED
+		AND LA_DOSES.PERSON_ID = CLINICAL_EVENT.PERSON_ID
+		AND CLINICAL_EVENT.EVENT_CD IN (
+			37556352, -- buprenorphine
+			37556956, -- FENTanyl
+			37557538, -- methadone
+			37557620, -- morphine Sulfate
+			37557746, -- OXYcodone
+			61253250, -- MORPhine
+			117038568, -- buprenorphine-naloxone
+			117038771 -- HYDROcodone
+		)
+		AND CLINICAL_EVENT.VALID_UNTIL_DT_TM > DATE '2099-12-31'
+		AND CLINICAL_EVENT.EVENT_ID = CE_MED_RESULT.EVENT_ID
+		AND CE_MED_RESULT.VALID_UNTIL_DT_TM > DATE '2099-12-31'
+		AND (CE_MED_RESULT.ADMIN_DOSAGE > 0 OR CE_MED_RESULT.IV_EVENT_CD > 0)
+		AND CLINICAL_EVENT.ORDER_ID = ORDERS.ORDER_ID
+		AND CLINICAL_EVENT.ORDER_ID = ORDER_PRODUCT.ORDER_ID
+		AND ORDER_PRODUCT.ITEM_ID IN (
+			70713575, -- buprenorphine 8mg tab
+			182750880, -- buprenorphine 2 mg TAB
+			80271818, -- buprenorphine-naloxone (2mg-0.5mg) TAB
+			89644187, -- buprenorphine-naloxone 8 mg - 2 mg Tab
+			186603017, -- buprenorphine-naloxone (8mg-2mg) FILM ORAL
+			2931623, -- fentaNYL 75 microgram/hr PATCH
+			2939684, -- fentaNYL 25 microgram/hr PATCH
+			2939721, -- fentaNYL 50 microgram/hr PATCH
+			46394496, -- fentaNYL 12 microgram/hr PATCH
+			2937609, -- methadone 10 mg TAB
+			2937648, -- methadone 5 mg TAB
+			2970105, -- methadone 5 mg/5 ml oral SOLN
+			23879032, -- methadone *1mg/1ml oral syringes
+			2818166, -- MORPhine sulfate 15 mg CRT
+			2818209, -- MORPhine sulfate 30 mg CRT
+			2938272, -- oxyCODONE 20 mg ERT
+			2960111, -- oxyCODONE 10 mg ERT
+			98741187 -- oxyCODONE 15 mg ERT
+		)
+), FIRST_DOSES AS (
+	SELECT
+		ENCNTR_ID,
+		ITEM_ID,
+		MIN(DOSE_DATETIME) AS FIRST_DOSE_DATETIME
+	FROM
+		ALL_DOSES
+	GROUP BY
+		ENCNTR_ID,
+		ITEM_ID
+
 ), HOME_MEDS AS (
 	SELECT DISTINCT
 		LA_DOSES.ENCNTR_ID,
@@ -557,7 +633,11 @@ SELECT
 	ENCNTR_ALIAS.ALIAS AS FIN,
 	-- LA_DOSES.MEDICATION,
 	LA_DOSES.MED_PRODUCT,
-	ON_AT_HOME_SUM.ON_AT_HOME,
+	TRUNC(FIRST_DOSES.FIRST_DOSE_DATETIME) AS FIRST_DATETIME,
+	CASE
+		WHEN ON_AT_HOME_SUM.ON_AT_HOME = 1 THEN 'Yes'
+		WHEN ON_AT_HOME_SUM.ON_AT_HOME = 0 THEN 'No'
+	END AS ON_AT_HOME,
 	HOME_MEDS_MME_TOTAL.HOME_MMED,
 	INTERMIT_MME_AVG.MMED_AVG,
 	CASE
@@ -566,6 +646,7 @@ SELECT
 	END AS APPROPRIATE
 FROM
 	ENCNTR_ALIAS,
+	FIRST_DOSES,
 	HOME_MEDS_MME_TOTAL,
 	INTERMIT_MME_AVG,
 	LA_DOSES,
@@ -575,5 +656,7 @@ WHERE
 	AND LA_DOSES.ORDER_MED = ON_AT_HOME_SUM.INPT_MED(+)
 	AND LA_DOSES.ENCNTR_ID = INTERMIT_MME_AVG.ENCNTR_ID(+)
 	AND LA_DOSES.ENCNTR_ID = HOME_MEDS_MME_TOTAL.ENCNTR_ID(+)
+	AND LA_DOSES.ENCNTR_ID = FIRST_DOSES.ENCNTR_ID(+)
+	AND LA_DOSES.ITEM_ID = FIRST_DOSES.ITEM_ID(+)
 	AND LA_DOSES.ENCNTR_ID = ENCNTR_ALIAS.ENCNTR_ID
 	AND ENCNTR_ALIAS.ENCNTR_ALIAS_TYPE_CD = 619 -- FIN NBR
