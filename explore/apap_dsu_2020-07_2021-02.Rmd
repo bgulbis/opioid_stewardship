@@ -1,0 +1,233 @@
+---
+title: "Acetminophen Orders in Day Surgery Patients"
+author: "Brian Gulbis, PharmD, BCPS"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(themebg)
+
+df_orders <- read_excel("../data/raw/apap_dsu_orders_2020-07_2021-02.xlsx") %>%
+    rename_all(str_to_lower) %>%
+    mutate(
+        across(anesth_start_datetime, ~coalesce(., surg_start_datetime)),
+        across(anesth_stop_datetime, ~coalesce(., surg_stop_datetime)),
+        group = if_else(admit_datetime < mdy("11/1/2020", tz = "US/Central"), "Jul-Oct", "Nov-Feb"),
+        across(group, factor, levels = c("Jul-Oct", "Nov-Feb"))
+    )
+    
+first_orders <- df_orders %>%
+    arrange(encntr_id, order_datetime) %>%
+    distinct(encntr_id, surg_case_id, .keep_all = TRUE) %>%
+    mutate(
+        po_dose = order_route %in% c("PO", "GT", "JT"),
+        order_prior_day = floor_date(order_datetime, "days") < floor_date(anesth_start_datetime, "days"),
+        po_prior_surg = order_datetime < anesth_start_datetime & po_dose
+    )
+
+po_before <- df_orders %>%
+    filter(
+        order_datetime < anesth_start_datetime,
+        order_route %in% c("PO", "GT", "JT")
+    ) %>%
+    arrange(encntr_id, surg_case_id, event_id) %>%
+    distinct(encntr_id, surg_case_id, .keep_all = TRUE) %>%
+    mutate(
+        same_day = floor_date(order_datetime, "days") == 
+            floor_date(anesth_start_datetime, "days"),
+        given_before = if_else(dose_datetime < anesth_start_datetime, TRUE, FALSE, FALSE),
+        given = !is.na(event_id),
+        order_to_surg_min = difftime(
+            anesth_start_datetime,
+            order_datetime, 
+            units = "mins"
+        ),
+        across(order_to_surg_min, as.numeric)
+    ) 
+
+ordered_not_given <- po_before %>%
+    filter(!given)
+
+day_of_not_given <- ordered_not_given %>%
+    filter(same_day) 
+
+no_po_order <- df_orders %>%
+    anti_join(po_before, by = c("encntr_id", "surg_case_id")) %>%
+    arrange(encntr_id, surg_case_id, event_id) %>%
+    distinct(encntr_id, surg_case_id, .keep_all = TRUE) %>%
+    mutate(
+        iv_dose = order_route %in% c("IV", "IVPB"),
+        same_day = floor_date(dose_datetime, "days") == 
+            floor_date(anesth_stop_datetime, "days"),
+        iv_timing = case_when(
+            iv_dose & dose_datetime >= anesth_stop_datetime & same_day ~ "Post-op",
+            iv_dose & dose_datetime >= anesth_start_datetime & same_day ~ "Intra-op",
+            TRUE ~ "None"
+        ),
+        across(iv_timing, factor, levels = c("None", "Intra-op", "Post-op"))
+    )
+
+fmt_table <- function(.df, .cap, .cols) {
+    knitr::kable(
+        x = .df,
+        caption = .cap,
+        col.names = .cols,
+        booktabs = TRUE,
+        digits = 0
+    )
+}
+```
+
+```{r}
+first_orders %>%
+    add_count(group, name = "n_group") %>%
+    count(group, n_group, po_prior_surg) %>%
+    mutate(pct = n / n_group * 100) %>%
+    filter(po_prior_surg) %>%
+    select(-n_group, -po_prior_surg) %>%
+    fmt_table(
+        "How many patients had oral acetaminophen ordered before surgery?",
+        c("Group", "No. patients", "% patients")
+    )
+
+```
+
+```{r}
+first_orders %>%
+    add_count(group, name = "n_group") %>%
+    count(group, n_group, order_prior_day) %>%
+    mutate(pct = n / n_group * 100) %>%
+    filter(order_prior_day) %>%
+    select(-n_group, -order_prior_day) %>%
+    fmt_table(
+        "Among all patients, how many had an order (IV or PO) placed before admission?",
+        c("Group", "No. patients", "% patients")
+    )
+
+```
+
+```{r}
+po_before %>%
+    add_count(group, name = "n_group") %>%
+    count(group, n_group, given_before) %>%
+    mutate(pct = n / n_group * 100) %>%
+    filter(given_before) %>%
+    select(-n_group, -given_before) %>%
+    fmt_table(
+        "Among those with orders prior to surgery, how many received an oral dose before surgery?",
+        c("Group", "No. patients", "% patients")
+    )
+
+```
+
+```{r}
+ordered_not_given %>%
+    add_count(group, name = "n_group") %>%
+    count(group, n_group, same_day) %>%
+    mutate(pct = n / n_group * 100) %>%
+    filter(same_day) %>%
+    select(-n_group, -same_day) %>%
+    fmt_table(
+        "Among those with orders prior to surgery but the dose was not given, how many had orders placed the same day?",
+        c("Group", "No. patients", "% patients")
+    )
+```
+
+```{r}
+day_of_not_given %>%
+    group_by(group) %>%
+    summarize_at(
+        "order_to_surg_min",
+        list(
+            mean = mean,
+            sd = sd,
+            median = median,
+            iqr = IQR
+        )
+    ) %>%
+    fmt_table(
+        "Among those with orders placed prior to surgery on the day of surgery and not given, how many minutes prior to surgery was the order placed?",
+        c("Group", "Mean", "SD", "Median", "IQR")
+    )
+```
+
+```{r, fig.cap="How many minutes prior to surgery was the order placed in patients who were and were not given a dose?"}
+po_before %>%
+    filter(same_day) %>%
+    ggplot(aes(x = given, y = order_to_surg_min, color = group)) +
+    geom_boxplot() +
+    ggtitle("Time prior to surgery when order was placed") +
+    xlab("Dose was given") +
+    ylab("Minutes prior to surgery") +
+    scale_color_brewer("Group", palette = "Set1") +
+    theme_bg()
+```
+
+```{r}
+no_po_order %>%
+    add_count(group, name = "n_group") %>%
+    count(group, n_group, iv_timing) %>%
+    mutate(pct = n / n_group * 100) %>%
+    select(-n_group) %>%
+    pivot_wider(names_from = group, values_from = c(n, pct)) %>%
+    select(iv_timing, `n_Jul-Oct`, `pct_Jul-Oct`, everything()) %>%
+    fmt_table(
+        "When oral was not ordered before surgery, how many patients received IV acetaminophen during surgery?",
+        c("IV given during surgery", "No. patients", "% patients", "No. patients", "% patients")
+    ) %>%
+    kableExtra::add_header_above(c("", "Jul-Oct" = 2, "Nov-Feb" = 2))
+```
+
+```{r}
+iv_doses <- df_orders %>%
+    filter(
+        !is.na(dose_datetime),
+        order_route %in% c("IV", "IVPB"),
+        admin_nurse_unit == "HH DSU"
+    ) %>%
+    mutate(
+        same_day = floor_date(dose_datetime, "days") == 
+            floor_date(anesth_stop_datetime, "days"),
+        iv_timing = case_when(
+            dose_datetime < anesth_start_datetime & same_day ~ "Pre-op",
+            dose_datetime >= anesth_stop_datetime & same_day ~ "Post-op",
+            dose_datetime < anesth_start_datetime ~ "Prior to day of surgery",
+            dose_datetime >= anesth_stop_datetime ~ "POD 1 or later",
+            TRUE ~ "Intra-op"
+        ),
+        across(iv_timing, factor, levels = c("Prior to day of surgery", "Pre-op", "Intra-op", "Post-op", "POD 1 or later"))
+    )
+
+iv_doses %>%
+    add_count(group, name = "n_group") %>%
+    count(group, n_group, iv_timing) %>%
+    mutate(pct = n / n_group * 100) %>%
+    select(-n_group) %>%
+    pivot_wider(names_from = group, values_from = c(n, pct)) %>%
+    select(iv_timing, `n_Jul-Oct`, `pct_Jul-Oct`, everything()) %>%
+    fmt_table(
+        "Timing of IV doses in Day Surgery Unit",
+        c("IV dose given", "No. doses", "% doses", "No. doses", "% doses")
+    ) %>%
+    kableExtra::add_header_above(c("", "Jul-Oct" = 2, "Nov-Feb" = 2))
+
+```
+
+
+```{r, eval=FALSE}
+df_orders %>%
+    filter(
+        !is.na(dose_datetime),
+        order_route %in% c("IV", "IVPB"),
+        admin_nurse_unit == "HH DSU"
+    ) %>%
+    count(dose_month)
+```
