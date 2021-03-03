@@ -221,13 +221,30 @@ iv_doses %>%
 
 ```
 
+```{r}
+pts_month <- df_orders %>%
+        filter(
+        !is.na(dose_datetime),
+        order_route %in% c("IV", "IVPB"),
+        admin_nurse_unit == "HH DSU"
+    ) %>%
+    distinct(encntr_id, dose_month) %>%
+    count(dose_month) %>%
+    rename(n_pts = n)
 
-```{r, eval=FALSE}
 df_orders %>%
     filter(
         !is.na(dose_datetime),
         order_route %in% c("IV", "IVPB"),
         admin_nurse_unit == "HH DSU"
     ) %>%
-    count(dose_month)
+    count(dose_month) %>%
+    left_join(pts_month, by = "dose_month") %>%
+    knitr::kable(
+        caption = "Number of doses and patients per month",
+        col.names = c("Month", "Doses", "Patients"),
+        booktabs = TRUE,
+        digits = 0
+    )
+
 ```
