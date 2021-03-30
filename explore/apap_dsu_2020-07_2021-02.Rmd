@@ -75,6 +75,33 @@ no_po_order <- df_orders %>%
         across(iv_timing, factor, levels = c("None", "Intra-op", "Post-op"))
     )
 
+n_pts <- df_orders %>%
+    filter(
+        !is.na(dose_datetime),
+        admin_nurse_unit == "HH DSU"
+    ) %>%
+    distinct(encntr_id, .keep_all = TRUE) %>%
+    count(group, name = "n_pts")
+
+iv_doses <- df_orders %>%
+    filter(
+        !is.na(dose_datetime),
+        order_route %in% c("IV", "IVPB"),
+        admin_nurse_unit == "HH DSU"
+    ) %>%
+    mutate(
+        same_day = floor_date(dose_datetime, "days") == 
+            floor_date(anesth_stop_datetime, "days"),
+        iv_timing = case_when(
+            dose_datetime < anesth_start_datetime & same_day ~ "Pre-op",
+            dose_datetime >= anesth_stop_datetime & same_day ~ "Post-op",
+            dose_datetime < anesth_start_datetime ~ "Prior to day of surgery",
+            dose_datetime >= anesth_stop_datetime ~ "POD 1 or later",
+            TRUE ~ "Intra-op"
+        ),
+        across(iv_timing, factor, levels = c("Prior to day of surgery", "Pre-op", "Intra-op", "Post-op", "POD 1 or later"))
+    )
+
 fmt_table <- function(.df, .cap, .cols) {
     knitr::kable(
         x = .df,
@@ -187,25 +214,23 @@ no_po_order %>%
 ```
 
 ```{r}
-iv_doses <- df_orders %>%
-    filter(
-        !is.na(dose_datetime),
-        order_route %in% c("IV", "IVPB"),
-        admin_nurse_unit == "HH DSU"
+iv_doses %>%
+    distinct(encntr_id, iv_timing, .keep_all = TRUE) %>%
+    # add_count(group, name = "n_group") %>%
+    left_join(n_pts, by = "group") %>%
+    count(group, n_pts, iv_timing) %>%
+    mutate(pct = n / n_pts * 100) %>%
+    select(-n_pts) %>%
+    pivot_wider(names_from = group, values_from = c(n, pct)) %>%
+    select(iv_timing, `n_Jul-Oct`, `pct_Jul-Oct`, everything()) %>%
+    fmt_table(
+        "How many patients received peri-operative IV acetaminophen?",
+        c("IV given during surgery", "No. patients", "% patients", "No. patients", "% patients")
     ) %>%
-    mutate(
-        same_day = floor_date(dose_datetime, "days") == 
-            floor_date(anesth_stop_datetime, "days"),
-        iv_timing = case_when(
-            dose_datetime < anesth_start_datetime & same_day ~ "Pre-op",
-            dose_datetime >= anesth_stop_datetime & same_day ~ "Post-op",
-            dose_datetime < anesth_start_datetime ~ "Prior to day of surgery",
-            dose_datetime >= anesth_stop_datetime ~ "POD 1 or later",
-            TRUE ~ "Intra-op"
-        ),
-        across(iv_timing, factor, levels = c("Prior to day of surgery", "Pre-op", "Intra-op", "Post-op", "POD 1 or later"))
-    )
+    kableExtra::add_header_above(c("", "Jul-Oct" = 2, "Nov-Feb" = 2))
+```
 
+```{r}
 iv_doses %>%
     add_count(group, name = "n_group") %>%
     count(group, n_group, iv_timing) %>%
