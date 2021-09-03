@@ -30,6 +30,10 @@ raw_meds <- read_excel("U:/Data/opioid_stewardship/sickle_cell/raw/sickle-cell_m
         across(medication, str_to_lower)
     )
 
+raw_pca <- read_excel("U:/Data/opioid_stewardship/sickle_cell/raw/sickle-cell_pca.xlsx") |> 
+    rename_all(str_to_lower) |> 
+    mutate(across(c(encntr_id, event_id), as.character))
+
 raw_vitals <- read_excel("U:/Data/opioid_stewardship/sickle_cell/raw/sickle-cell_vitals.xlsx") |> 
     rename_all(str_to_lower) |> 
     mutate(
@@ -96,13 +100,72 @@ df_cont <- df_opioids |>
     group_by(encntr_id) |> 
     summarize(across(mme_cont, sum, na.rm = TRUE))
 
+df_pca <- raw_pca |> 
+    select(-event_id) |> 
+    distinct(encntr_id, event_datetime, event, .keep_all = TRUE) |> 
+    pivot_wider(names_from = event, values_from = result_val) |> 
+    filter(str_detect(`PCA Drug`, regex("hydromorphone|morphine", ignore_case = TRUE)))
+
+df_pca_demand <- df_pca |> 
+    mutate(
+        across('PCA Drug', str_to_lower),
+        across(c(`PCA Demand Dose`, `PCA Doses Delivered`), as.numeric),
+        demand_given = `PCA Demand Dose` * `PCA Doses Delivered`,
+        mme_pca_demand = case_when(
+            str_detect(`PCA Drug`, "hydromorphone") ~ demand_given * 6.7,
+            TRUE ~ demand_given
+        )
+    ) |> 
+    group_by(encntr_id) |> 
+    summarize(across(mme_pca_demand, sum, na.rm = TRUE))
+
+df_pca_load <- df_pca |> 
+    filter(!is.na(`PCA Loading Dose`)) |> 
+    distinct(encntr_id, `PCA Drug`, .keep_all = TRUE) |> 
+    mutate(
+        across('PCA Drug', str_to_lower),
+        across(`PCA Loading Dose`, as.numeric),
+        mme_pca_load = case_when(
+            str_detect(`PCA Drug`, "hydromorphone") ~ `PCA Loading Dose` * 6.7,
+            TRUE ~ `PCA Loading Dose`
+        )
+    ) |> 
+    group_by(encntr_id) |> 
+    summarize(across(mme_pca_load, sum, na.rm = TRUE))
+
+df_pca_continuous <- df_pca |> 
+    filter(!is.na(`PCA Continuous Rate Dose`)) |> 
+    mutate(
+        across('PCA Drug', str_to_lower),
+        across(`PCA Continuous Rate Dose`, as.numeric)
+    ) |> 
+    group_by(encntr_id, `PCA Drug`) |> 
+    mutate(
+        time_diff = difftime(lead(event_datetime), event_datetime, units = "hours"),
+        across(time_diff, as.numeric),
+        cont_given = `PCA Continuous Rate Dose` * time_diff,
+        mme_pca_cont = case_when(
+            str_detect(`PCA Drug`, "hydromorphone") ~ cont_given * 6.7,
+            TRUE ~ cont_given
+        )
+    ) |> 
+    group_by(encntr_id) |> 
+    summarize(across(mme_pca_cont, sum, na.rm = TRUE))
+
 df_mme <- raw_pts |> 
     select(encntr_id) |> 
     left_join(df_bolus, by = "encntr_id") |> 
     left_join(df_cont, by = "encntr_id") |> 
+    left_join(df_pca_demand, by = "encntr_id") |> 
+    left_join(df_pca_load, by = "encntr_id") |> 
+    left_join(df_pca_continuous, by = "encntr_id") |> 
     group_by(encntr_id) |> 
-    mutate(mme_total = sum(mme_bolus, mme_cont, na.rm = TRUE)) |> 
+    mutate(mme_total = sum(mme_bolus, mme_cont, mme_pca_demand, mme_pca_load, mme_pca_cont, na.rm = TRUE)) |> 
     select(encntr_id, mme_total)
+
+data_pca <- df_pca |> 
+    left_join(raw_pts[c("encntr_id", "fin")], by = "encntr_id") |> 
+    select(fin, event_datetime:`PCA Continuous Rate Dose`)    
 
 df_dose_stop <- df_opioids |> 
     arrange(encntr_id, orig_order_id, desc(dose_datetime)) |> 
@@ -291,6 +354,7 @@ data_patients <- raw_pts |>
 l <- list(
     "patients" = data_patients,
     "opioid_doses" = data_doses_opioids,
+    "pca_doses" = data_pca,
     "adjunct_doses" = data_doses_adjunct,
     "naloxone_doses" = data_naloxone
 )
